@@ -1,0 +1,178 @@
+---
+alwaysApply: true
+description: Upstage API 연동 및 PDF 파싱 모듈 규칙
+---
+
+# Backend PDF 파싱 규칙
+
+## Overview
+
+Upstage Document Digitization API를 사용한 PDF 파싱 모듈입니다. 100페이지 초과 시 자동 분할 처리 및 재시도 로직을 포함합니다.
+
+## UpstageAPIClient 핵심 로직
+
+### 필수 구현 사항
+
+**100페이지 분할 처리**가 가장 중요합니다.
+
+```python
+# backend/parsers/upstage_api_client.py
+MAX_PAGES_PER_REQUEST = 100  # API 제한
+
+def parse_pdf(self, pdf_path: str, retries: int = 3) -> Dict[str, Any]:
+    total_pages = self._get_pdf_page_count(pdf_path)
+    
+    if total_pages <= self.MAX_PAGES_PER_REQUEST:
+        # 100페이지 이하: 단일 요청
+        return self._parse_single_pdf(pdf_path, retries)
+    else:
+        # 100페이지 초과: 분할 파싱
+        return self._parse_pdf_in_chunks(pdf_path, total_pages, retries)
+```
+
+### API 호출 및 재시도
+
+```python
+def _parse_single_pdf(self, pdf_path: str, retries: int = 3) -> Dict[str, Any]:
+    headers = {"Authorization": f"Bearer {self.api_key}"}
+    data = {
+        "ocr": "force",
+        "base64_encoding": "['table']",
+        "model": "document-parse",
+    }
+    
+    for attempt in range(retries):
+        try:
+            with open(pdf_path, "rb") as f:
+                files = {"document": f}
+                response = requests.post(
+                    self.url, headers=headers, files=files, data=data, timeout=120
+                )
+            
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 429:  # Rate limit
+                wait_time = 2**attempt  # 지수 백오프
+                time.sleep(wait_time)
+                continue
+            else:
+                raise Exception(f"API call failed: {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            if attempt < retries - 1:
+                time.sleep(2**attempt)
+                continue
+            raise
+```
+
+### 분할 파싱
+
+```python
+def _parse_pdf_in_chunks(self, pdf_path: str, total_pages: int, retries: int):
+    all_elements = []
+    page_offset = 0
+    
+    for start_page in range(0, total_pages, self.MAX_PAGES_PER_REQUEST):
+        end_page = min(start_page + self.MAX_PAGES_PER_REQUEST, total_pages)
+        
+        # PDF 분할
+        temp_path = self._split_pdf(pdf_path, start_page, end_page)
+        
+        # 분할된 PDF 파싱
+        chunk_result = self._parse_single_pdf(temp_path, retries)
+        
+        # Elements 병합 (페이지 번호 조정)
+        for elem in chunk_result.get("elements", []):
+            elem["page"] = elem["page"] + start_page + 1  # 1-based
+            all_elements.append(elem)
+        
+        time.sleep(2)  # Rate limit 방지
+```
+
+## PDFParser 구조화
+
+### Elements 구조화
+
+```python
+def _structure_elements(self, api_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """API 응답 elements를 표준 형식으로 변환"""
+    structured = []
+    
+    for elem in api_response.get("elements", []):
+        html_content = elem.get("content", {}).get("html", "")
+        
+        # HTML에서 텍스트 추출
+        text = self._extract_text_from_html(html_content)  # BeautifulSoup
+        
+        # Font size 추출
+        font_size = self._extract_font_size(html_content)  # regex
+        
+        # Bbox 계산
+        bbox = self._calculate_bbox(elem.get("coordinates", []))
+        
+        structured.append({
+            "id": elem.get("id"),
+            "page": elem.get("page"),
+            "text": text,
+            "category": elem.get("category", "unknown"),
+            "font_size": font_size,
+            "bbox": bbox,  # {x0, y0, x1, y1, width, height}
+        })
+    
+    return structured
+```
+
+### 페이지별 그룹화
+
+```python
+def _group_by_page(self, elements: List[Dict]) -> List[Dict]:
+    """Elements를 페이지별로 그룹화"""
+    pages_dict = {}
+    
+    for elem in elements:
+        page_num = elem.get("page", 1)
+        if page_num not in pages_dict:
+            pages_dict[page_num] = {
+                "page_number": page_num,
+                "elements": [],
+            }
+        pages_dict[page_num]["elements"].append(elem)
+    
+    # 각 페이지의 전체 텍스트 추출
+    for page in pages_dict.values():
+        page["raw_text"] = " ".join([e.get("text", "") for e in page["elements"]])
+    
+    return sorted(pages_dict.values(), key=lambda p: p["page_number"])
+```
+
+## 환경변수 설정
+
+```python
+# backend/config/settings.py
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    upstage_api_key: str  # 필수
+    
+    class Config:
+        env_file = ".env"
+```
+
+## 에러 처리
+
+- Upstage API 실패 시: `error_parsing` 상태로 저장
+- 재시도 실패 시: 예외 발생 후 상위 레벨에서 처리
+- Rate limit (429): 지수 백오프로 재시도
+
+## 체크리스트
+
+- [ ] 100페이지 초과 시 반드시 분할 파싱 구현
+- [ ] Rate limit (429) 처리 필수
+- [ ] 재시도 로직은 지수 백오프 사용
+- [ ] Elements 구조화 시 HTML 파싱 (BeautifulSoup) 사용
+- [ ] Bbox 계산 시 좌표 배열 처리
+- [ ] 이모지 없는 로깅 사용 (`[INFO]`, `[ERROR]`)
+
+## 참고
+
+- 선행 서비스: `docs/book-assistant_repomix_backend.md` (Line 3484-3683)
+- Upstage API: `https://api.upstage.ai/v1/document-digitization`

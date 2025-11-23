@@ -1,0 +1,139 @@
+---
+alwaysApply: true
+description: 페이지 및 챕터 요약 생성 모듈 규칙
+---
+
+# Backend 요약 생성 규칙
+
+## Overview
+
+LLM을 사용하여 페이지별 및 챕터별 서머리를 생성하는 모듈입니다. 페이지 요약을 먼저 생성하고, 이를 집계하여 챕터 요약을 생성합니다.
+
+## 페이지 요약
+
+### PageSummarizer
+
+```python
+# backend/summarizers/page_summarizer.py
+def summarize_page(self, page_text: str, book_context: Optional[str] = None) -> str:
+    # 긴 텍스트는 토큰 제한 고려하여 잘라내기
+    max_chars = 4000
+    if len(page_text) > max_chars:
+        page_text = page_text[:max_chars] + "..."
+    
+    # LLM 호출
+    summary = self.chain.summarize_page(page_text, book_context)
+    return summary  # 2~4문장 또는 bullet 형태
+```
+
+### LLM Chain
+
+```python
+# backend/summarizers/llm_chains.py
+class PageSummaryChain(LLMChain):
+    def summarize_page(self, page_text: str, book_context: Optional[str] = None):
+        instruction = """Summarize the following page in 2-4 sentences or bullet points.
+Focus on the main ideas and key information."""
+        return self.summarize(page_text, instruction, book_context)
+```
+
+## 챕터 요약
+
+### ChapterSummarizer
+
+```python
+# backend/summarizers/chapter_summarizer.py
+def summarize_chapter(
+    self,
+    chapter_text: Optional[str] = None,
+    page_summaries: Optional[List[str]] = None,
+) -> str:
+    # 옵션 A: 챕터 원문 직접 요약
+    # 옵션 B: 페이지 요약들을 집계 (권장)
+    
+    if page_summaries:
+        combined_text = "\n\n".join([f"Page {i+1}: {s}" for i, s in enumerate(page_summaries)])
+        instruction = "Based on the following page summaries, create a comprehensive chapter summary..."
+    else:
+        instruction = "Summarize the following chapter in 1-3 paragraphs..."
+    
+    return self.chain.summarize_chapter(chapter_text, page_summaries)
+```
+
+## 요약 서비스
+
+### 요약 생성 플로우
+
+```python
+# backend/api/services/summary_service.py
+def summarize_pages(self, book_id: int):
+    # 1. PDF 파싱 (캐시 사용)
+    parsed_data = self.pdf_parser.parse_pdf(book.source_file_path, use_cache=True)
+    
+    # 2. 본문 페이지 범위 확인
+    main_pages = book.structure_data.get("main", {}).get("pages", [])
+    
+    # 3. 각 페이지 요약 생성
+    for page_data in pages_data:
+        if page_number not in main_pages:
+            continue  # 본문 페이지만 요약
+        
+        summary_text = self.page_summarizer.summarize_page(page_text, book_context)
+        
+        # PageSummary DB 저장
+        page_summary = PageSummary(...)
+        self.db.add(page_summary)
+
+def summarize_chapters(self, book_id: int):
+    # 1. 페이지 요약 가져오기
+    page_summaries_dict = {...}
+    
+    # 2. 각 챕터의 페이지 요약들을 집계
+    for chapter in chapters:
+        page_summaries = [page_summaries_dict[p] for p in chapter_pages]
+        
+        # 3. 챕터 요약 생성
+        summary_text = self.chapter_summarizer.summarize_chapter(
+            page_summaries=page_summaries
+        )
+        
+        # ChapterSummary DB 저장
+        chapter_summary = ChapterSummary(...)
+        self.db.add(chapter_summary)
+```
+
+## LLM 설정
+
+```python
+# backend/config/constants.py
+SUMMARY_MAX_LENGTH = 500  # 토큰
+SUMMARY_TEMPERATURE = 0.7
+
+# backend/summarizers/llm_chains.py
+self.model = "gpt-4o-mini"  # 또는 "gpt-4"
+self.temperature = SUMMARY_TEMPERATURE
+self.max_tokens = SUMMARY_MAX_LENGTH
+```
+
+## 백그라운드 작업
+
+```python
+# backend/api/routers/summary.py
+@router.post("/{book_id}/summarize/pages")
+def summarize_pages(background_tasks: BackgroundTasks, ...):
+    background_tasks.add_task(summary_service.summarize_pages, book_id)
+    return {"message": "Page summarization started"}
+```
+
+## 상태 관리
+
+- `page_summarized`: 페이지 요약 완료
+- `summarized`: 챕터 요약 완료 (최종 상태)
+
+## 체크리스트
+
+- [ ] 페이지 요약 생성 후 챕터 요약 생성 (순서 필수)
+- [ ] 긴 텍스트는 토큰 제한 고려하여 잘라내기
+- [ ] 챕터 요약은 페이지 요약들을 집계하는 방식 권장
+- [ ] 백그라운드 작업 사용 (FastAPI BackgroundTasks)
+- [ ] 요약 생성 실패 시 에러 로그 및 상태 업데이트

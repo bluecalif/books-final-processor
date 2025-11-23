@@ -1,0 +1,113 @@
+---
+alwaysApply: true
+description: 프로젝트 진행 규칙 및 Phase별 워크플로우
+---
+
+# 프로젝트 진행 규칙
+
+## Overview
+
+이 프로젝트는 **Phase별 진행** 원칙을 엄격히 따릅니다. AGENTS.md와 TODOs.md를 참고하여 단계적으로 개발을 진행합니다.
+
+## 핵심 원칙
+
+### Phase별 진행 필수
+
+**절대 혼자서 전체 작업을 진행하지 마세요. 반드시 Phase별로 사용자 피드백을 받아서 진행하세요.**
+
+1. TODOs.md에 정의된 Phase 단위로만 작업 진행
+2. 한 번에 여러 Phase를 진행하지 않음
+3. 각 Phase 완료 후 반드시 사용자에게 보고 및 피드백 요청
+4. 사용자가 명시적으로 "모든 Phase를 진행하라"고 요청한 경우에만 전체 진행
+
+### Phase 진행 템플릿
+
+#### Phase 시작 전
+```
+## Phase X 시작 준비
+
+**작업 범위**: [Phase 제목]
+- [ ] 작업 목록 1
+- [ ] 작업 목록 2
+
+**예상 시간**: [예상 소요 시간]
+**의존성**: [이전 Phase 완료 여부]
+
+진행하시겠습니까?
+```
+
+#### Phase 완료 후
+```
+## Phase X 완료
+
+**완료된 작업**: [완료된 항목들]
+**확인 사항**: [사용자가 확인해야 할 것들]
+**다음 단계**: Phase X+1 진행 준비
+
+피드백 주시면 다음 Phase로 진행하겠습니다.
+```
+
+## 프로젝트 구조
+
+```
+books-final-processor/
+├── backend/              # Python/FastAPI 백엔드
+│   ├── api/             # FastAPI 애플리케이션
+│   │   ├── models/      # SQLAlchemy ORM 모델
+│   │   ├── routers/     # FastAPI 라우터
+│   │   ├── schemas/     # Pydantic 스키마
+│   │   └── services/    # 비즈니스 로직
+│   ├── parsers/         # PDF 파싱 모듈
+│   ├── structure/       # 구조 분석 모듈
+│   ├── summarizers/     # 요약 모듈
+│   └── config/          # 설정
+├── frontend/            # Next.js 14+ 프론트엔드
+├── docs/                # 문서
+│   ├── PRD_books-processor.md
+│   ├── core_logics.md
+│   └── book-assistant_repomix_backend.md
+└── TODOs.md             # 프로젝트 계획
+```
+
+## 기술 스택
+
+### 백엔드
+- Python 3.10+
+- FastAPI (API 서버)
+- SQLAlchemy (ORM)
+- SQLite (로컬 DB)
+- Poetry (패키지 관리)
+- Pydantic (스키마 검증)
+
+### 프론트엔드
+- Next.js 14+ (App Router)
+- TypeScript
+- Tailwind CSS
+- shadcn/ui
+
+### 외부 API
+- Upstage Document Digitization API
+- OpenAI API (LLM 요약)
+
+## 개발 환경
+
+- **OS**: Windows PowerShell 5.1
+- **서버 실행**: 프로젝트 루트에서 실행 (cd 사용 금지)
+- **Poetry**: 1.8.5 이상 필수
+- **이모지 사용 금지**: PowerShell 환경 고려
+
+## Phase 목록
+
+1. **Phase 1**: 프로젝트 기초 및 환경 설정
+2. **Phase 2**: PDF 파싱 모듈 (Upstage API 연동)
+3. **Phase 3**: 구조 분석 모듈
+4. **Phase 4**: 요약 모듈
+5. **Phase 5**: 프론트엔드 (Next.js)
+6. **Phase 6**: 통합 및 테스트
+
+## 참고 문서
+
+- `AGENTS.md`: AI 에이전트 운영 가이드
+- `TODOs.md`: 상세 구현 계획
+- `docs/PRD_books-processor.md`: 제품 요구사항
+- `docs/core_logics.md`: 구조 분석 로직 설계

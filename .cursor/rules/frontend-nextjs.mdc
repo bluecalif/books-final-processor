@@ -1,0 +1,194 @@
+---
+alwaysApply: true
+description: Next.js 14+ 프론트엔드 개발 규칙
+---
+
+# Frontend Next.js 규칙
+
+## Overview
+
+Next.js 14+ App Router를 사용한 프론트엔드 개발 표준입니다. TypeScript, Tailwind CSS, shadcn/ui를 사용합니다.
+
+## 프로젝트 구조
+
+```
+frontend/
+├── app/                    # Next.js App Router
+│   ├── page.tsx           # 책 목록 (/)
+│   ├── books/[id]/page.tsx # 책 상세 (/books/:id)
+│   ├── layout.tsx
+│   └── globals.css
+├── components/            # React 컴포넌트
+│   ├── ui/               # shadcn/ui 컴포넌트
+│   ├── BookList.tsx
+│   ├── BookUpload.tsx
+│   ├── StructureViewer.tsx
+│   └── SummaryViewer.tsx
+├── hooks/                # Custom Hooks
+│   ├── useBooks.ts
+│   ├── useStructure.ts
+│   └── useSummary.ts
+└── types/                # TypeScript 타입
+    └── api.ts
+```
+
+## 컴포넌트 패턴
+
+### Client Component
+
+```typescript
+'use client'
+
+import { useState, useEffect } from 'react'
+
+export default function BookList({ books }: { books: Book[] }) {
+    const [loading, setLoading] = useState(true)
+    
+    useEffect(() => {
+        fetchBooks()
+    }, [])
+    
+    return <div>...</div>
+}
+```
+
+### Server Component (기본)
+
+```typescript
+// 기본적으로 Server Component
+export default function Page() {
+    return <div>...</div>
+}
+```
+
+## API 호출
+
+### Custom Hook 패턴
+
+```typescript
+// frontend/hooks/useBooks.ts
+export function useBooks() {
+    const [books, setBooks] = useState<Book[]>([])
+    const [loading, setLoading] = useState(true)
+    
+    useEffect(() => {
+        fetch('http://localhost:8000/api/books')
+            .then(res => res.json())
+            .then(data => {
+                setBooks(data.books)
+                setLoading(false)
+            })
+    }, [])
+    
+    return { books, loading }
+}
+```
+
+### 타입 정의
+
+```typescript
+// frontend/types/api.ts
+export interface Book {
+    id: number
+    title: string | null
+    author: string | null
+    status: string
+    created_at: string
+    updated_at: string
+}
+
+export interface BookListResponse {
+    books: Book[]
+    total: number
+}
+```
+
+## 인터랙티브 구조 분석 UI
+
+### 구조 선택 상태
+
+```typescript
+type StructureSelectionState = {
+    mainStartPage: number | null
+    chapterStartPages: number[]  // 정렬된 페이지 번호
+    notesStartPage: number | null
+}
+```
+
+### 최종 구조 확정
+
+```typescript
+// StructureSelectionState → FinalStructureInput 변환
+const finalStructure: FinalStructureInput = {
+    main_start_page: mainStartPage,
+    main_end_page: notesStartPage ? notesStartPage - 1 : totalPages,
+    chapters: chapterStartPages.map((page, idx) => ({
+        start_page: page,
+        end_page: chapterStartPages[idx + 1] - 1 || mainEndPage,
+        title: getChapterTitle(page)
+    }))
+}
+
+// API 호출
+await fetch(`/api/books/${bookId}/structure/final`, {
+    method: 'POST',
+    body: JSON.stringify({ structure: finalStructure })
+})
+```
+
+## 스타일링
+
+### Tailwind CSS 사용
+
+```typescript
+<div className="bg-white rounded-lg shadow-md p-6">
+    <h2 className="text-xl font-semibold mb-4">Title</h2>
+    <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+        Click
+    </button>
+</div>
+```
+
+### shadcn/ui 컴포넌트
+
+```typescript
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+
+<Card>
+    <Button variant="default">Submit</Button>
+</Card>
+```
+
+## 상태 표시
+
+```typescript
+const getStatusColor = (status: string) => {
+    switch (status) {
+        case 'summarized': return 'bg-green-100 text-green-800'
+        case 'structured': return 'bg-blue-100 text-blue-800'
+        case 'parsed': return 'bg-yellow-100 text-yellow-800'
+        case 'uploaded': return 'bg-gray-100 text-gray-800'
+        default: return 'bg-red-100 text-red-800'
+    }
+}
+```
+
+## 체크리스트
+
+- [ ] Client Component는 'use client' 지시어 필수
+- [ ] API 타입은 types/api.ts에 정의
+- [ ] Custom Hook은 hooks/ 디렉토리에 정의
+- [ ] 컴포넌트는 PascalCase로 명명
+- [ ] Tailwind CSS는 utility-first 사용
+- [ ] API 호출은 환경변수로 URL 관리
+
+## 환경변수
+
+```typescript
+// frontend/.env.local
+NEXT_PUBLIC_API_URL=http://localhost:8000
+
+// 사용
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+```

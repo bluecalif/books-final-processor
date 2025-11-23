@@ -1,0 +1,168 @@
+---
+alwaysApply: true
+description: 책 구조 분석 모듈 규칙 (휴리스틱 + LLM)
+---
+
+# Backend 구조 분석 규칙
+
+## Overview
+
+PDF 파싱 결과를 바탕으로 책의 구조(본문 시작, 챕터 경계)를 자동으로 파악하는 모듈입니다. 휴리스틱 기반 1차 분석 후 LLM으로 보정합니다.
+
+## StructureBuilder (휴리스틱)
+
+### 파이프라인
+
+```python
+# backend/structure/structure_builder.py
+def build_structure(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
+    # 1. 영역 경계 탐지 (서문/본문/끝)
+    boundaries = self.boundary_detector.detect_boundaries(parsed_data)
+    
+    # 2. 챕터 탐지 (본문 영역에서)
+    main_pages = boundaries["main"]["pages"]
+    chapters = self.chapter_detector.detect_chapters(parsed_data, main_pages)
+    
+    # 3. 최종 구조 생성
+    structure = {
+        "start": {"pages": [...], "page_count": N},
+        "main": {"pages": [...], "page_count": N, "chapters": [...]},
+        "end": {"pages": [...], "page_count": N}
+    }
+    return structure
+```
+
+### ContentBoundaryDetector
+
+```python
+# backend/structure/content_boundary_detector.py
+START_KEYWORDS = ["차례", "contents", "목차", "서문", ...]
+END_KEYWORDS = ["참고문헌", "references", "부록", "index", ...]
+
+def detect_boundaries(self, parsed_data):
+    # 앞쪽 20페이지에서 시작 키워드 검색
+    # 뒤쪽 30페이지에서 끝 키워드 검색
+    # 본문 시작/끝 페이지 결정
+```
+
+### ChapterDetector
+
+```python
+# backend/structure/chapter_detector.py
+CHAPTER_PATTERNS = [
+    r"^제\s*\d+\s*장",  # 제1장
+    r"^CHAPTER\s+\d+",  # CHAPTER 1
+    r"^\d+\.\s*[^.]+\s*$",  # 1. 제목
+]
+
+def detect_chapters(self, parsed_data, main_pages):
+    # 페이지 상단 요소 확인 (y0 작음, font_size 큼)
+    # 챕터 패턴 매칭
+    # 챕터 범위 계산 (start_page, end_page)
+```
+
+## LLMStructureRefiner
+
+### 핵심 메서드
+
+```python
+# backend/structure/llm_structure_refiner.py
+def refine_structure(self, parsed_data, heuristic_structure):
+    # 1. 컨텍스트 구축
+    context = self._build_context_for_llm(parsed_data, heuristic_structure)
+    
+    # 2. 프롬프트 생성
+    prompt = self._build_prompt(context, heuristic_structure)
+    
+    # 3. LLM 호출
+    response = self.client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[...],
+        temperature=0.3,
+        response_format={"type": "json_object"}
+    )
+    
+    # 4. 응답 파싱 및 검증
+    suggestion = self._parse_llm_response(response)
+    return suggestion
+```
+
+### page_toplines_chain 생성
+
+```python
+def _build_page_toplines_chain(self, pages, max_chars=50) -> str:
+    """각 페이지 맨 위 50자 체인 생성 (핵심 정보)"""
+    lines = []
+    for page in sorted(pages, key=lambda p: p["page_number"]):
+        elements = page.get("elements", [])
+        if not elements:
+            continue
+        
+        # y0가 가장 작은 요소 (페이지 상단)
+        top_elem = min(elements, key=lambda e: e.get("bbox", {}).get("y0", 1.0))
+        text = top_elem.get("text", "").strip()
+        
+        if text:
+            snippet = text[:max_chars]
+            lines.append(f"p{page['page_number']}: {snippet}")
+    
+    return "\n".join(lines)
+```
+
+### Pydantic 스키마
+
+```python
+class LLMChapterSuggestion(BaseModel):
+    number: Optional[int] = None
+    title: str
+    start_page: int
+    end_page: int
+
+class LLMStructureSuggestion(BaseModel):
+    main_start_page: int
+    main_end_page: Optional[int] = None
+    chapters: List[LLMChapterSuggestion]
+    notes_pages: List[int] = []
+    issues: Optional[str] = None
+```
+
+## 구조 후보 API
+
+```python
+# GET /api/books/{id}/structure/candidates
+{
+    "meta": {"total_pages": 100, ...},
+    "auto_candidates": [
+        {"label": "heuristic_v1", "structure": {...}},
+        {"label": "llm_v2", "structure": {...}}
+    ],
+    "chapter_title_candidates": [...],
+    "samples": {"head": [...], "tail": [...], "around_main_start": [...]}
+}
+```
+
+## 최종 구조 확정 API
+
+```python
+# POST /api/books/{id}/structure/final
+class FinalStructureInput(BaseModel):
+    main_start_page: int
+    main_end_page: Optional[int] = None
+    chapters: List[FinalChapterInput]
+    notes_pages: List[int] = []
+    start_pages: List[int] = []
+    end_pages: List[int] = []
+```
+
+## 체크리스트
+
+- [ ] page_toplines_chain은 반드시 구현 (LLM 정확도 향상)
+- [ ] LLM 응답은 Pydantic으로 검증 필수
+- [ ] LLM 실패 시 휴리스틱 구조로 fallback
+- [ ] 챕터 패턴은 정규식으로 매칭
+- [ ] 본문 시작/끝은 키워드 기반 탐지
+
+## 참고
+
+- `docs/core_logics.md`: 상세 설계 문서
+- 선행 서비스: `docs/book-assistant_repomix_backend.md` (Line 5448-5538)

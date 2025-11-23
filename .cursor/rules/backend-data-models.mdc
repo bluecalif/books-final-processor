@@ -1,0 +1,152 @@
+---
+alwaysApply: true
+description: SQLAlchemy 데이터 모델 및 데이터베이스 규칙
+---
+
+# Backend 데이터 모델 규칙
+
+## Overview
+
+SQLAlchemy ORM을 사용한 데이터 모델 정의 및 데이터베이스 관리 규칙입니다. SQLite를 사용하며, 추후 Supabase 전환을 고려한 추상화 레이어를 유지합니다.
+
+## 데이터 모델 구조
+
+### Books 테이블
+
+```python
+# backend/api/models/book.py
+class BookStatus(str, enum.Enum):
+    UPLOADED = "uploaded"
+    PARSED = "parsed"
+    STRUCTURED = "structured"
+    PAGE_SUMMARIZED = "page_summarized"
+    SUMMARIZED = "summarized"
+    ERROR_PARSING = "error_parsing"
+    ERROR_STRUCTURING = "error_structuring"
+    ERROR_SUMMARIZING = "error_summarizing"
+    FAILED = "failed"
+
+class Book(Base):
+    __tablename__ = "books"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=True)
+    author = Column(String, nullable=True)
+    source_file_path = Column(String, nullable=False)
+    page_count = Column(Integer, nullable=True)
+    status = Column(SQLEnum(BookStatus), default=BookStatus.UPLOADED)
+    structure_data = Column(JSON, nullable=True)  # 최종 확정된 구조
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+```
+
+### Pages 테이블
+
+```python
+class Page(Base):
+    __tablename__ = "pages"
+    
+    id = Column(Integer, primary_key=True)
+    book_id = Column(Integer, ForeignKey("books.id", ondelete="CASCADE"))
+    page_number = Column(Integer, nullable=False)  # 1-based
+    raw_text = Column(Text, nullable=True)
+    metadata = Column(JSON, nullable=True)  # 레이아웃/블록 정보
+```
+
+### Chapters 테이블
+
+```python
+class Chapter(Base):
+    __tablename__ = "chapters"
+    
+    id = Column(Integer, primary_key=True)
+    book_id = Column(Integer, ForeignKey("books.id", ondelete="CASCADE"))
+    title = Column(String, nullable=False)
+    order_index = Column(Integer, nullable=False)  # 0-based
+    start_page = Column(Integer, nullable=False)
+    end_page = Column(Integer, nullable=False)
+    section_type = Column(String, nullable=True)  # 본문/서문/부록
+```
+
+### PageSummaries 테이블
+
+```python
+class PageSummary(Base):
+    __tablename__ = "page_summaries"
+    
+    id = Column(Integer, primary_key=True)
+    book_id = Column(Integer, ForeignKey("books.id", ondelete="CASCADE"))
+    page_id = Column(Integer, ForeignKey("pages.id", ondelete="CASCADE"))
+    page_number = Column(Integer, nullable=False)  # 중복 저장 (조회 편의)
+    summary_text = Column(Text, nullable=False)
+    lang = Column(String, nullable=True)
+```
+
+### ChapterSummaries 테이블
+
+```python
+class ChapterSummary(Base):
+    __tablename__ = "chapter_summaries"
+    
+    id = Column(Integer, primary_key=True)
+    book_id = Column(Integer, ForeignKey("books.id", ondelete="CASCADE"))
+    chapter_id = Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"))
+    summary_text = Column(Text, nullable=False)
+    lang = Column(String, nullable=True)
+```
+
+## 관계 설정
+
+```python
+# Book 모델
+pages = relationship("Page", back_populates="book", cascade="all, delete-orphan")
+chapters = relationship("Chapter", back_populates="book", cascade="all, delete-orphan")
+page_summaries = relationship("PageSummary", back_populates="book", cascade="all, delete-orphan")
+chapter_summaries = relationship("ChapterSummary", back_populates="book", cascade="all, delete-orphan")
+
+# Page 모델
+book = relationship("Book", back_populates="pages")
+summary = relationship("PageSummary", back_populates="page", uselist=False)
+
+# Chapter 모델
+book = relationship("Book", back_populates="chapters")
+summary = relationship("ChapterSummary", back_populates="chapter", uselist=False)
+```
+
+## 데이터베이스 설정
+
+```python
+# backend/api/database.py
+DATABASE_URL = f"sqlite:///{DATABASE_DIR / 'books.db'}"
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False},  # SQLite만 필요
+    echo=False,
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+def init_db():
+    """DB 초기화 (테이블 생성)"""
+    Base.metadata.create_all(bind=engine)
+```
+
+## 상태 관리
+
+책 상태는 다음 순서로 진행:
+```
+uploaded → parsed → structured → page_summarized → summarized
+```
+
+각 단계별로 `updated_at` 및 상태별 타임스탬프(`analyzed_at`, `summarized_at`) 업데이트.
+
+## 체크리스트
+
+- [ ] Foreign Key에 `ondelete="CASCADE"` 설정
+- [ ] 관계에 `cascade="all, delete-orphan"` 설정
+- [ ] JSON 컬럼은 `structure_data` 같은 복잡한 데이터 저장용
+- [ ] 페이지 번호는 1-based (1부터 시작)
+- [ ] order_index는 0-based (0부터 시작)
+- [ ] `init_db()`는 앱 시작 시 호출

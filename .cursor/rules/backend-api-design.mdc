@@ -1,0 +1,184 @@
+---
+alwaysApply: true
+description: FastAPI 백엔드 API 설계 규칙 및 패턴
+---
+
+# Backend API 설계 규칙
+
+## Overview
+
+FastAPI 기반 RESTful API 설계 표준입니다. 레이어드 아키텍처 패턴을 따르며, 라우터 → 서비스 → 모델 구조를 유지합니다.
+
+## 아키텍처 패턴
+
+### 레이어 구조
+
+```
+routers/      → API 엔드포인트 정의 (HTTP 요청/응답)
+  ↓
+services/     → 비즈니스 로직 (도메인 로직)
+  ↓
+models/       → 데이터베이스 모델 (SQLAlchemy ORM)
+schemas/      → API 스키마 (Pydantic)
+```
+
+### 라우터 패턴
+
+```python
+# backend/api/routers/books.py
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from backend.api.database import get_db
+from backend.api.services.book_service import BookService
+from backend.api.schemas.book import BookResponse, BookListResponse
+
+router = APIRouter()
+
+@router.get("", response_model=BookListResponse)
+def get_books(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    """책 리스트 조회"""
+    service = BookService(db)
+    books = service.get_books(skip=skip, limit=limit)
+    return BookListResponse(books=[...], total=len(books))
+```
+
+### 서비스 패턴
+
+```python
+# backend/api/services/book_service.py
+class BookService:
+    def __init__(self, db: Session):
+        self.db = db
+    
+    def get_book(self, book_id: int) -> Optional[Book]:
+        return self.db.query(Book).filter(Book.id == book_id).first()
+    
+    def create_book(self, ...) -> Book:
+        book = Book(...)
+        self.db.add(book)
+        self.db.commit()
+        self.db.refresh(book)
+        return book
+```
+
+## API 엔드포인트 규칙
+
+### URL 패턴
+
+```
+/api/books              # 리소스 복수형
+/api/books/{book_id}    # 특정 리소스
+/api/books/{book_id}/structure/candidates  # 중첩 리소스
+```
+
+### HTTP 메서드
+
+- `GET`: 조회 (멱등성 보장)
+- `POST`: 생성 또는 액션
+- `PUT/PATCH`: 수정
+- `DELETE`: 삭제
+
+### 상태 코드
+
+- `200 OK`: 성공
+- `201 Created`: 생성 성공
+- `404 Not Found`: 리소스 없음
+- `400 Bad Request`: 잘못된 요청
+- `500 Internal Server Error`: 서버 에러
+
+## Pydantic 스키마
+
+### 네이밍 규칙
+
+- `XxxResponse`: 응답 스키마
+- `XxxCreate`: 생성 요청 스키마
+- `XxxUpdate`: 수정 요청 스키마
+
+### 예시
+
+```python
+# backend/api/schemas/book.py
+from pydantic import BaseModel
+from backend.api.models.book import BookStatus
+
+class BookResponse(BaseModel):
+    id: int
+    title: Optional[str]
+    status: BookStatus
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True  # SQLAlchemy 모델과 호환
+```
+
+## 에러 처리
+
+```python
+try:
+    book = service.get_book(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+except ValueError as e:
+    raise HTTPException(status_code=404, detail=str(e))
+except Exception as e:
+    logger.error(f"Error: {e}")
+    raise HTTPException(status_code=500, detail="Internal server error")
+```
+
+## 로깅
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+logger.info(f"[INFO] Processing book {book_id}")
+logger.error(f"[ERROR] Failed to process: {e}")
+```
+
+**주의**: 이모지 사용 금지 (PowerShell 환경 고려)
+
+## 데이터베이스 의존성
+
+```python
+from backend.api.database import get_db
+
+@router.get("/items")
+def read_items(db: Session = Depends(get_db)):
+    # db 사용
+    items = db.query(Item).all()
+    return items
+```
+
+## 파일 업로드
+
+```python
+from fastapi import UploadFile, File
+
+@router.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    # 파일 저장
+    with open(file_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+```
+
+## 백그라운드 작업
+
+```python
+from fastapi import BackgroundTasks
+
+@router.post("/process")
+def process_item(background_tasks: BackgroundTasks):
+    background_tasks.add_task(process_task, item_id)
+    return {"message": "Processing started"}
+```
+
+## 체크리스트
+
+- [ ] 라우터는 HTTP 레이어만 담당 (비즈니스 로직은 서비스로)
+- [ ] 모든 응답은 Pydantic 스키마로 정의
+- [ ] 에러 처리는 적절한 HTTP 상태 코드 반환
+- [ ] 로깅은 이모지 없이 `[INFO]`, `[ERROR]` 형식 사용
+- [ ] DB 세션은 `Depends(get_db)`로 주입

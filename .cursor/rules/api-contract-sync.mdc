@@ -1,0 +1,510 @@
+---
+alwaysApply: true
+description: 백엔드-프론트엔드 API 계약 동기화 규칙 (데이터 불일치 방지)
+---
+
+# API Contract Synchronization
+
+## Overview
+
+백엔드와 프론트엔드 간 데이터 불일치를 방지하기 위한 규칙입니다. API 스키마, Enum, 상수 등이 양쪽에서 동일하게 유지되어야 합니다.
+
+## Domain Knowledge
+
+### 이 프로젝트에서 동기화가 필요한 영역
+
+1. **BookStatus Enum** (상태 관리)
+   - 백엔드: `uploaded`, `parsed`, `structured`, `page_summarized`, `summarized`
+   - 프론트엔드: 동일한 값으로 타입 정의 필요
+
+2. **API 요청/응답 스키마**
+   - BookResponse, ChapterResponse, PageSummaryResponse 등
+   - 구조 분석 후보 및 최종 구조 입력 스키마
+
+3. **구조 분석 상수**
+   - CHAPTER_PATTERNS (챕터 탐지 패턴)
+   - START_KEYWORDS, END_KEYWORDS (본문 시작/끝 키워드)
+
+4. **쿼리 파라미터**
+   - 페이지네이션: `skip`, `limit`
+   - 필터: `status`, `page_number` 등
+
+## Standards & Conventions
+
+### 1. Enum 공유 원칙
+
+**단일 진실 공급원**: Enum은 백엔드에서 정의하고, 프론트엔드는 동일한 문자열 값 사용
+
+**백엔드**:
+```python
+# backend/api/models/book.py
+from enum import Enum
+
+class BookStatus(str, Enum):
+    UPLOADED = "uploaded"
+    PARSED = "parsed"
+    STRUCTURED = "structured"
+    PAGE_SUMMARIZED = "page_summarized"
+    SUMMARIZED = "summarized"
+    ERROR_PARSING = "error_parsing"
+    ERROR_STRUCTURING = "error_structuring"
+    ERROR_SUMMARIZING = "error_summarizing"
+    FAILED = "failed"
+```
+
+**프론트엔드**:
+```typescript
+// frontend/types/api.ts
+export type BookStatus =
+  | 'uploaded'
+  | 'parsed'
+  | 'structured'
+  | 'page_summarized'
+  | 'summarized'
+  | 'error_parsing'
+  | 'error_structuring'
+  | 'error_summarizing'
+  | 'failed'
+
+// 또는 union type으로
+export const BOOK_STATUSES = [
+  'uploaded',
+  'parsed',
+  'structured',
+  'page_summarized',
+  'summarized',
+  'error_parsing',
+  'error_structuring',
+  'error_summarizing',
+  'failed'
+] as const
+
+export type BookStatus = typeof BOOK_STATUSES[number]
+```
+
+### 2. API 스키마 동기화
+
+**백엔드 Pydantic 스키마**:
+```python
+# backend/api/schemas/book.py
+from pydantic import BaseModel
+from datetime import datetime
+from backend.api.models.book import BookStatus
+
+class BookResponse(BaseModel):
+    id: int
+    title: Optional[str]
+    author: Optional[str]
+    status: BookStatus  # Enum 사용
+    page_count: Optional[int]
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class ChapterResponse(BaseModel):
+    id: int
+    book_id: int
+    title: str
+    order_index: int
+    start_page: int
+    end_page: int
+    section_type: Optional[str]
+```
+
+**프론트엔드 TypeScript 타입**:
+```typescript
+// frontend/types/api.ts
+import { BookStatus } from './api'
+
+export interface BookResponse {
+  id: number
+  title: string | null
+  author: string | null
+  status: BookStatus  // 백엔드와 동일
+  page_count: number | null
+  created_at: string  // ISO 8601 문자열
+  updated_at: string
+}
+
+export interface ChapterResponse {
+  id: number
+  book_id: number
+  title: string
+  order_index: number
+  start_page: number
+  end_page: number
+  section_type: string | null
+}
+```
+
+**중요**: 필드명, 타입(nullable 처리), Enum 값이 정확히 일치해야 함
+
+### 3. 구조 분석 스키마 동기화
+
+**백엔드**:
+```python
+# backend/api/schemas/structure.py
+from pydantic import BaseModel
+from typing import List, Optional
+
+class LLMChapterSuggestion(BaseModel):
+    number: Optional[int] = None
+    title: str
+    start_page: int
+    end_page: int
+
+class LLMStructureSuggestion(BaseModel):
+    main_start_page: int
+    main_end_page: Optional[int] = None
+    chapters: List[LLMChapterSuggestion]
+    notes_pages: List[int] = []
+    issues: Optional[str] = None
+
+class FinalStructureInput(BaseModel):
+    main_start_page: int
+    main_end_page: Optional[int] = None
+    chapters: List[FinalChapterInput]
+    notes_pages: List[int] = []
+    start_pages: List[int] = []
+    end_pages: List[int] = []
+```
+
+**프론트엔드**:
+```typescript
+// frontend/types/api.ts
+export interface LLMChapterSuggestion {
+  number: number | null
+  title: string
+  start_page: number
+  end_page: number
+}
+
+export interface LLMStructureSuggestion {
+  main_start_page: number
+  main_end_page: number | null
+  chapters: LLMChapterSuggestion[]
+  notes_pages: number[]
+  issues: string | null
+}
+
+export interface FinalStructureInput {
+  main_start_page: number
+  main_end_page: number | null
+  chapters: FinalChapterInput[]
+  notes_pages: number[]
+  start_pages: number[]
+  end_pages: number[]
+}
+```
+
+### 4. 쿼리 파라미터 동기화
+
+**백엔드 라우터**:
+```python
+# backend/api/routers/books.py
+@router.get("", response_model=BookListResponse)
+def get_books(
+    skip: int = 0,  # 쿼리 파라미터 이름
+    limit: int = 100,
+    status: Optional[BookStatus] = None
+):
+    ...
+```
+
+**프론트엔드 API 클라이언트**:
+```typescript
+// frontend/lib/api.ts
+export const api = {
+  getBooks: async (params?: {
+    skip?: number  // 백엔드와 동일한 이름
+    limit?: number
+    status?: BookStatus
+  }) => {
+    const { data } = await apiClient.get<BookListResponse>('/api/books', {
+      params: params  // 직접 전달 (JSON.stringify 안 함!)
+    })
+    return data
+  }
+}
+```
+
+**주의**: 쿼리 파라미터는 snake_case 유지 (camelCase 변환 안 함)
+
+### 5. 상수 동기화 (선택적)
+
+**백엔드 상수**:
+```python
+# backend/config/constants.py
+CHAPTER_PATTERNS = [
+    r"^제\s*\d+\s*장",  # 제1장
+    r"^CHAPTER\s+\d+",  # CHAPTER 1
+    r"^\d+\.\s*[^.]+\s*$",  # 1. 제목
+]
+
+START_KEYWORDS = ["차례", "contents", "목차", "서문"]
+END_KEYWORDS = ["참고문헌", "references", "부록", "index"]
+```
+
+**프론트엔드 상수** (필요시):
+```typescript
+// frontend/lib/constants.ts
+export const START_KEYWORDS = [
+  '차례',
+  'contents',
+  '목차',
+  '서문'
+] as const
+
+export const END_KEYWORDS = [
+  '참고문헌',
+  'references',
+  '부록',
+  'index'
+] as const
+```
+
+**참고**: 프론트엔드에서 사용하지 않는 상수는 동기화 불필요
+
+## Implementation Patterns
+
+### Pattern 1: Pydantic 스키마 → TypeScript 타입 변환
+
+**수동 동기화 (권장)**:
+```typescript
+// frontend/types/api.ts
+// 백엔드 Pydantic 스키마를 참고하여 타입 정의
+
+// 백엔드: BookResponse(BaseModel)
+export interface BookResponse {
+  id: number
+  title: string | null  // Optional[str] → string | null
+  status: BookStatus    // BookStatus(Enum) → BookStatus(type)
+  // ...
+}
+```
+
+**자동 생성 (선택적)**:
+```bash
+# OpenAPI 스키마를 기반으로 타입 자동 생성
+# npx openapi-typescript http://localhost:8000/openapi.json -o types/api.ts
+```
+
+### Pattern 2: API 응답 검증
+
+**프론트엔드 런타임 검증**:
+```typescript
+// frontend/lib/validators.ts
+import { BookStatus, BOOK_STATUSES } from '@/types/api'
+
+export function validateBookResponse(data: any): data is BookResponse {
+  if (!data || typeof data !== 'object') return false
+  if (typeof data.id !== 'number') return false
+  if (data.title !== null && typeof data.title !== 'string') return false
+  if (!BOOK_STATUSES.includes(data.status)) return false
+  return true
+}
+
+// 사용
+const book = await api.getBook(bookId)
+if (!validateBookResponse(book)) {
+  console.error('[Validation] Invalid book response:', book)
+  throw new Error('Invalid book data')
+}
+```
+
+### Pattern 3: 상태 표시 함수 동기화
+
+**프론트엔드 상태 표시**:
+```typescript
+// frontend/lib/book-utils.ts
+import { BookStatus } from '@/types/api'
+
+export function getStatusLabel(status: BookStatus): string {
+  const labels: Record<BookStatus, string> = {
+    uploaded: '업로드됨',
+    parsed: '파싱 완료',
+    structured: '구조 분석 완료',
+    page_summarized: '페이지 요약 완료',
+    summarized: '요약 완료',
+    error_parsing: '파싱 오류',
+    error_structuring: '구조 분석 오류',
+    error_summarizing: '요약 오류',
+    failed: '실패'
+  }
+  return labels[status] || '알 수 없음'
+}
+
+export function getStatusColor(status: BookStatus): string {
+  const colors: Record<BookStatus, string> = {
+    uploaded: 'bg-gray-100 text-gray-800',
+    parsed: 'bg-blue-100 text-blue-800',
+    structured: 'bg-green-100 text-green-800',
+    page_summarized: 'bg-purple-100 text-purple-800',
+    summarized: 'bg-green-100 text-green-800',
+    error_parsing: 'bg-red-100 text-red-800',
+    error_structuring: 'bg-red-100 text-red-800',
+    error_summarizing: 'bg-red-100 text-red-800',
+    failed: 'bg-red-100 text-red-800'
+  }
+  return colors[status] || 'bg-gray-100 text-gray-800'
+}
+```
+
+## Checklist
+
+### 새 API 엔드포인트 추가 시
+
+#### Backend 작업
+- [ ] Pydantic 스키마 정의 (`backend/api/schemas/`)
+- [ ] Enum은 `str, Enum` 사용하여 정의
+- [ ] 라우터에서 쿼리 파라미터 이름 확인
+- [ ] FastAPI `response_model` 지정
+- [ ] OpenAPI 문서 확인 (`/docs` 또는 `/openapi.json`)
+
+#### Frontend 작업
+- [ ] TypeScript 타입 정의 (`frontend/types/api.ts`)
+- [ ] 필드명, 타입(nullable), Enum 값이 백엔드와 일치하는지 확인
+- [ ] API 클라이언트 함수 구현 (`frontend/lib/api.ts`)
+- [ ] 쿼리 파라미터 이름이 백엔드와 일치하는지 확인 (snake_case)
+- [ ] 테스트: 실제 API 호출하여 응답 검증
+
+### Enum 추가/수정 시
+
+- [ ] 백엔드: `backend/api/models/book.py` 또는 별도 파일에 Enum 정의
+- [ ] 프론트엔드: `frontend/types/api.ts`에 동일한 문자열 값으로 타입 정의
+- [ ] 사용처 검색: 양쪽 코드에서 하드코딩된 값이 있는지 확인
+- [ ] Constants로 추출: 자주 사용되는 경우 constants 파일로 이동
+
+### 스키마 변경 시
+
+- [ ] 백엔드 Pydantic 모델 수정
+- [ ] 프론트엔드 TypeScript 타입 수정 (필드명, 타입 확인)
+- [ ] 기존 데이터 호환성 확인 (마이그레이션 필요 시)
+- [ ] API 테스트: Postman 또는 curl로 응답 검증
+- [ ] 프론트엔드 컴포넌트 업데이트 (필요한 경우)
+
+## Common Pitfalls
+
+### ❌ 피해야 할 것
+
+1. **하드코딩된 Enum 값**:
+```typescript
+// BAD
+if (book.status === 'uploaded') { ... }  // 문자열 리터럴 사용
+
+// GOOD
+import { BookStatus } from '@/types/api'
+if (book.status === BookStatus.UPLOADED) { ... }
+```
+
+2. **타입 불일치**:
+```python
+# Backend
+status: BookStatus  # Enum
+
+# Frontend
+status: string  # ❌ 너무 넓은 타입
+
+# GOOD
+status: BookStatus  # ✅ 리터럴 유니온 타입
+```
+
+3. **필드명 불일치**:
+```python
+# Backend
+class BookResponse(BaseModel):
+    page_count: Optional[int]  # snake_case
+```
+
+```typescript
+// Frontend - BAD
+interface BookResponse {
+  pageCount: number  // ❌ camelCase로 변환하면 안 됨!
+}
+
+// Frontend - GOOD
+interface BookResponse {
+  page_count: number | null  // ✅ 백엔드와 동일
+}
+```
+
+4. **쿼리 파라미터 이름 불일치**:
+```typescript
+// BAD
+api.getBooks({ pageNumber: 1 })  // camelCase
+
+// GOOD
+api.getBooks({ page_number: 1 })  // snake_case (백엔드와 일치)
+```
+
+### ✅ 권장 사항
+
+1. **타입 안전성**:
+```typescript
+// Enum을 타입으로 사용
+export type BookStatus = 'uploaded' | 'parsed' | 'structured' | ...
+
+// 또는 const assertion 사용
+export const BOOK_STATUSES = ['uploaded', 'parsed', ...] as const
+export type BookStatus = typeof BOOK_STATUSES[number]
+```
+
+2. **런타임 검증**:
+```typescript
+// API 응답 검증 함수 사용
+function validateBookResponse(data: any): data is BookResponse {
+  // 타입 가드 구현
+}
+```
+
+3. **상수 관리**:
+```typescript
+// 자주 사용되는 값은 constants로 관리
+export const BOOK_STATUSES = [...] as const
+export type BookStatus = typeof BOOK_STATUSES[number]
+```
+
+4. **API 클라이언트 타입 지정**:
+```typescript
+// 제네릭으로 타입 지정
+export const api = {
+  getBooks: async (): Promise<BookListResponse> => {
+    const { data } = await apiClient.get<BookListResponse>('/api/books')
+    return data
+  }
+}
+```
+
+## 프로젝트별 동기화 체크리스트
+
+### BookStatus Enum
+- [ ] 백엔드: `backend/api/models/book.py`에 정의
+- [ ] 프론트엔드: `frontend/types/api.ts`에 동일한 값으로 타입 정의
+- [ ] 상태 표시 함수: `getStatusLabel()`, `getStatusColor()` 업데이트
+
+### API 스키마
+- [ ] BookResponse: `id`, `title`, `author`, `status`, `page_count` 등
+- [ ] ChapterResponse: `id`, `title`, `order_index`, `start_page`, `end_page`
+- [ ] PageSummaryResponse: `page_number`, `summary_text`, `lang`
+- [ ] ChapterSummaryResponse: `chapter_id`, `summary_text`, `lang`
+
+### 구조 분석 스키마
+- [ ] LLMStructureSuggestion: `main_start_page`, `chapters`, `notes_pages`
+- [ ] FinalStructureInput: `main_start_page`, `chapters`, `start_pages`, `end_pages`
+
+### 쿼리 파라미터
+- [ ] `GET /api/books`: `skip`, `limit`, `status`
+- [ ] `GET /api/books/{id}/pages`: `page_number` (옵션)
+- [ ] `GET /api/books/{id}/chapters`: `chapter_id` (옵션)
+
+## References
+
+- Backend API rules: `.cursor/rules/backend-api-design.mdc`
+- Backend data models: `.cursor/rules/backend-data-models.mdc`
+- Frontend Next.js rules: `.cursor/rules/frontend-nextjs.mdc`
+- Pydantic schemas: `backend/api/schemas/`
+- TypeScript types: `frontend/types/api.ts`
+- API client: `frontend/lib/api.ts`
+- Constants: `backend/config/constants.py`, `frontend/lib/constants.ts` (필요시)
