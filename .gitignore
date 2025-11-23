@@ -36,6 +36,9 @@ poetry.lock
 *.sqlite3
 data/
 
+# PDF input files (user-provided test files)
+data/input/*.pdf
+
 # IDE
 .vscode/
 .idea/

@@ -35,6 +35,7 @@ def get_db():
 
 def init_db():
     """데이터베이스 초기화 (테이블 생성)"""
+    # 모델 import로 테이블 정의 로드
     from backend.api.models.book import Book, Page, Chapter, PageSummary, ChapterSummary
     
     Base.metadata.create_all(bind=engine)

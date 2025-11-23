@@ -1,392 +1,205 @@
 ---
 alwaysApply: true
-description: 백엔드 테스트 전략 및 규칙 (단위/통합/E2E 테스트)
+description: 백엔드 테스트 전략 및 규칙 (E2E 테스트만, 실제 서버 실행)
 ---
 
 # Backend Testing 규칙
 
 ## Overview
 
-백엔드 테스트 전략 및 규칙입니다. 단위 테스트, 통합 테스트, E2E 테스트를 구분하여 체계적으로 테스트를 작성합니다. 특히 E2E 테스트는 실제 데이터만 사용하여 실제 환경과 동일한 조건에서 검증합니다.
+백엔드 테스트는 **E2E 테스트만** 사용합니다. 실제 서버를 띄워서 프로덕션 플로우와 동일하게 검증합니다.
+
+## 핵심 원칙: 프로덕션 플로우 검증
+
+### 테스트의 목적
+- **목적**: 프로덕션에서 문제가 없음을 보장
+- **원칙**: 테스트를 위한 테스트가 아니라, 프로덕션 안정성을 위한 테스트
+- **기준**: 백엔드 테스트를 통과하면 바로 배포하여 서비스할 수 있어야 함
+
+### 프로덕션 플로우와 동일하게 검증
+1. **실제 서버 실행**
+   - E2E 테스트는 반드시 실제 서버를 띄워서 실행
+   - `conftest_e2e.py`에 `test_server` fixture 사용
+   - `httpx.Client`로 실제 HTTP 요청
+   - 백그라운드 작업이 완료될 때까지 상태를 폴링하여 검증
+
+2. **백그라운드 작업 검증**
+   - `FastAPI BackgroundTasks`는 실제 서버 환경에서만 제대로 실행됨
+   - 실제 서버에서 백그라운드 작업이 실행되고 완료되는지 반드시 검증
+
+3. **테스트를 위한 테스트 금지**
+   - ❌ 서비스를 직접 호출하여 백그라운드 작업을 우회
+   - ❌ 프로덕션 플로우와 다른 방식으로 테스트
+   - ❌ 테스트 편의를 위해 실제 동작을 우회
+   - ✅ 프로덕션과 동일한 플로우로 검증
+   - ✅ 실제 사용자 시나리오와 동일하게 테스트
 
 ## Domain Knowledge
 
-### 테스트 계층 구조
+### E2E 테스트 원칙
 
-```
-E2E 테스트 (End-to-End)
-  ↓ 실제 데이터만 사용, Mock 사용 금지
-통합 테스트 (Integration)
-  ↓ 실제 DB/파일 사용, 외부 API는 모킹 가능
-단위 테스트 (Unit)
-  ↓ 완전히 격리, 모든 의존성 모킹
-```
-
-### 테스트 범위
-
-1. **단위 테스트**: 개별 함수/메서드 검증
-   - 모킹 허용 (외부 API, DB 등)
-   - 빠른 실행
-   - 높은 커버리지 목표
-
-2. **통합 테스트**: 모듈 간 연동 검증
-   - 실제 DB 사용 (테스트 DB)
-   - 실제 파일 사용 (테스트용 샘플)
-   - 외부 API는 모킹 가능
-
-3. **E2E 테스트**: 전체 플로우 검증
-   - **실제 데이터만 사용** (Mock 사용 절대 금지)
-   - 실제 외부 API 연동 (Upstage, OpenAI)
-   - 실제 DB 데이터 검증
-   - 실제 PDF 파일 사용
+- **실제 데이터만 사용** (Mock 사용 절대 금지)
+- **실제 서버 실행**: 프로덕션 플로우와 동일하게 검증
+- 실제 외부 API 연동 (Upstage, OpenAI)
+- 실제 DB 데이터 검증
+- 실제 PDF 파일 사용
 
 ## Standards & Conventions
 
-### 테스트 프레임워크 및 도구
+### 테스트 프레임워크
 
 ```python
-# 필수 패키지
 pytest              # 테스트 프레임워크
-pytest-asyncio      # 비동기 테스트 지원
-httpx               # FastAPI 테스트 클라이언트
+httpx               # 실제 HTTP 요청 클라이언트
 pytest-cov          # 코드 커버리지 (선택)
-
-# pyproject.toml
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.4.0"
-pytest-asyncio = "^0.21.0"
-httpx = "^0.25.0"
-pytest-cov = "^4.1.0"
-```
-
-### 테스트 디렉토리 구조
-
-```
-backend/
-├── tests/
-│   ├── conftest.py              # 테스트 픽스처 (공통 설정)
-│   ├── test_models.py           # DB 모델 테스트
-│   ├── test_schemas.py          # Pydantic 스키마 테스트
-│   ├── test_main.py             # FastAPI 앱 기본 테스트
-│   ├── test_upstage_api_client.py  # UpstageAPIClient 단위 테스트
-│   ├── test_pdf_parser.py       # PDFParser 테스트
-│   ├── test_books_router.py     # Books API 통합 테스트
-│   ├── test_structure_router.py # Structure API 통합 테스트
-│   ├── test_summary_router.py   # Summary API 통합 테스트
-│   ├── test_e2e.py              # 전체 플로우 E2E 테스트
-│   └── fixtures/                # 테스트 픽스처 파일
-│       └── sample.pdf           # 테스트용 샘플 PDF
 ```
 
 ### 테스트 파일 네이밍
 
-- 파일명: `test_<module_name>.py`
-- 테스트 함수: `test_<function_name>_<scenario>`
-- 예시:
-  ```python
-  # test_upstage_api_client.py
-  def test_get_pdf_page_count_success()
-  def test_get_pdf_page_count_error()
-  def test_parse_single_pdf_retry_on_rate_limit()
-  ```
+- 파일명: `test_e2e_<feature>.py`
+- 테스트 함수: `test_e2e_<feature>_<scenario>`
 
-### 테스트 클래스 구조 (선택적)
+### 테스트 마커
 
 ```python
-# 테스트 클래스로 그룹화 (선택적)
-class TestUpstageAPIClient:
-    def test_get_pdf_page_count_success(self):
-        ...
-    
-    def test_parse_single_pdf_with_retry(self):
-        ...
+@pytest.mark.e2e           # E2E 테스트 (실제 서버 실행)
+@pytest.mark.slow          # 실행 시간이 긴 테스트
 ```
 
 ## Implementation Patterns
 
-### 1. conftest.py 설정
+### 1. conftest_e2e.py 설정
 
 ```python
-# backend/tests/conftest.py
+# backend/tests/conftest_e2e.py
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from backend.api.database import Base, get_db
-from backend.api.main import app
-
-# 테스트 DB (in-memory SQLite)
-TEST_DATABASE_URL = "sqlite:///:memory:"
-
-@pytest.fixture(scope="function")
-def db_session():
-    """각 테스트마다 새로운 DB 세션 생성"""
-    engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(bind=engine)
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = TestingSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(bind=engine)
-
-@pytest.fixture(scope="function")
-def client(db_session):
-    """FastAPI 테스트 클라이언트"""
-    def override_get_db():
-        try:
-            yield db_session
-        finally:
-            pass
-    
-    app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
-
-@pytest.fixture
-def sample_pdf_path():
-    """테스트용 샘플 PDF 경로"""
-    return "backend/tests/fixtures/sample.pdf"
-```
-
-### 2. 단위 테스트 패턴 (모킹 사용)
-
-```python
-# backend/tests/test_upstage_api_client.py
-import pytest
-from unittest.mock import Mock, patch, MagicMock
-from backend.parsers.upstage_api_client import UpstageAPIClient
-
-class TestUpstageAPIClient:
-    @patch('backend.parsers.upstage_api_client.requests.post')
-    def test_parse_single_pdf_success(self, mock_post):
-        # API 응답 모킹
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "elements": [...],
-            "usage": {"pages": 10}
-        }
-        mock_post.return_value = mock_response
-        
-        # 테스트 실행
-        client = UpstageAPIClient(api_key="test-key")
-        result = client._parse_single_pdf("test.pdf", retries=1)
-        
-        # 검증
-        assert result["usage"]["pages"] == 10
-        mock_post.assert_called_once()
-    
-    @patch('backend.parsers.upstage_api_client.requests.post')
-    def test_parse_single_pdf_rate_limit_retry(self, mock_post):
-        # Rate limit (429) 에러 모킹 후 성공
-        mock_response_429 = Mock()
-        mock_response_429.status_code = 429
-        
-        mock_response_200 = Mock()
-        mock_response_200.status_code = 200
-        mock_response_200.json.return_value = {"elements": []}
-        
-        mock_post.side_effect = [mock_response_429, mock_response_200]
-        
-        client = UpstageAPIClient(api_key="test-key")
-        result = client._parse_single_pdf("test.pdf", retries=2)
-        
-        assert mock_post.call_count == 2  # 재시도 확인
-```
-
-### 3. 통합 테스트 패턴 (실제 DB 사용)
-
-```python
-# backend/tests/test_books_router.py
-import pytest
+import subprocess
+import httpx
+import time
 from pathlib import Path
 
-def test_upload_book_success(client, db_session, sample_pdf_path):
-    """PDF 업로드 통합 테스트"""
+TEST_SERVER_HOST = "127.0.0.1"
+TEST_SERVER_PORT = 8001
+TEST_SERVER_URL = f"http://{TEST_SERVER_HOST}:{TEST_SERVER_PORT}"
+
+@pytest.fixture(scope="session")
+def test_server():
+    """E2E 테스트용 실제 서버 실행"""
+    project_root = Path(__file__).parent.parent.parent
+    
+    # uvicorn 서버 시작
+    server_process = subprocess.Popen(
+        ["poetry", "run", "uvicorn", "backend.api.main:app", 
+         "--host", TEST_SERVER_HOST, "--port", str(TEST_SERVER_PORT)],
+        cwd=project_root
+    )
+    
+    # 서버 시작 대기 (헬스체크)
+    max_wait = 10
+    for _ in range(max_wait):
+        try:
+            response = httpx.get(f"{TEST_SERVER_URL}/health", timeout=1.0)
+            if response.status_code == 200:
+                break
+        except:
+            time.sleep(0.5)
+    else:
+        raise RuntimeError("Test server failed to start")
+    
+    yield TEST_SERVER_URL
+    
+    # 서버 종료
+    server_process.terminate()
+    server_process.wait()
+
+@pytest.fixture(scope="function")
+def e2e_client(test_server):
+    """E2E 테스트용 HTTP 클라이언트"""
+    client = httpx.Client(base_url=test_server, timeout=30.0)
+    yield client
+    client.close()
+```
+
+### 2. E2E 테스트 패턴 (실제 서버 실행, 프로덕션 플로우 검증)
+
+```python
+# backend/tests/test_e2e_pdf_parsing.py
+import pytest
+import time
+import httpx
+
+@pytest.mark.e2e
+def test_e2e_pdf_parsing_full_flow(e2e_client: httpx.Client, db_session, sample_pdf_path):
+    """전체 플로우 E2E 테스트 (실제 서버 실행)"""
+    # 1. PDF 업로드 (실제 HTTP 요청)
     with open(sample_pdf_path, "rb") as f:
-        response = client.post(
-            "/api/books/upload",
-            files={"file": ("test.pdf", f, "application/pdf")}
-        )
+        files = {"file": ("sample.pdf", f, "application/pdf")}
+        response = e2e_client.post("/api/books/upload", files=files)
     
     assert response.status_code == 200
-    data = response.json()
-    assert "book_id" in data
-    assert data["status"] == "uploaded"
+    book_id = response.json()["book_id"]
     
-    # DB 검증
-    from backend.api.models.book import Book
-    book = db_session.query(Book).filter(Book.id == data["book_id"]).first()
-    assert book is not None
-    assert book.status == BookStatus.UPLOADED
-```
-
-### 4. E2E 테스트 패턴 (실제 데이터 사용)
-
-```python
-# backend/tests/test_e2e.py
-import pytest
-import os
-from pathlib import Path
-
-@pytest.mark.e2e  # E2E 테스트 마커
-class TestFullPipelineE2E:
-    """⚠️ 필수: 실제 데이터만 사용, Mock 사용 금지"""
+    # 2. 백그라운드 작업 검증 (프로덕션 플로우와 동일)
+    # 실제 서버에서 백그라운드 작업이 실행되므로 상태 폴링
+    max_wait_time = 300
+    start_time = time.time()
     
-    def test_full_pipeline_e2e(self, client, db_session, sample_pdf_path):
-        """전체 플로우 E2E 테스트"""
-        # 1. PDF 업로드 (실제 파일)
-        with open(sample_pdf_path, "rb") as f:
-            upload_response = client.post(
-                "/api/books/upload",
-                files={"file": ("sample.pdf", f, "application/pdf")}
-            )
-        book_id = upload_response.json()["book_id"]
+    while True:
+        elapsed = time.time() - start_time
+        if elapsed > max_wait_time:
+            pytest.fail(f"Background task timeout after {max_wait_time} seconds")
         
-        # 2. 실제 Upstage API 파싱 (백그라운드 작업)
-        # 상태 폴링하여 parsed 상태 확인
-        import time
-        for _ in range(30):  # 최대 30초 대기
-            response = client.get(f"/api/books/{book_id}")
-            status = response.json()["status"]
-            if status == "parsed":
-                break
-            time.sleep(1)
-        assert status == "parsed"
+        response = e2e_client.get(f"/api/books/{book_id}")
+        assert response.status_code == 200
+        status = response.json()["status"]
         
-        # 3. 구조 분석 후보 생성 (실제 LLM 호출)
-        candidates_response = client.get(f"/api/books/{book_id}/structure/candidates")
-        assert candidates_response.status_code == 200
-        candidates = candidates_response.json()
-        assert "auto_candidates" in candidates
+        if status == "parsed":
+            break
+        elif status == "error_parsing":
+            pytest.fail(f"Parsing failed: book_id={book_id}")
         
-        # 4. 최종 구조 확정
-        final_structure = {
-            "main_start_page": candidates["auto_candidates"][0]["structure"]["main"]["pages"][0],
-            "chapters": [...]
-        }
-        final_response = client.post(
-            f"/api/books/{book_id}/structure/final",
-            json=final_structure
-        )
-        assert final_response.status_code == 200
-        
-        # 5-9. 나머지 단계 검증...
-        
-        # 최종 결과 검증
-        final_response = client.get(f"/api/books/{book_id}")
-        assert final_response.json()["status"] == "summarized"
+        time.sleep(2)
+    
+    # 3. 파싱 결과 검증
+    response = e2e_client.get(f"/api/books/{book_id}")
+    assert response.status_code == 200
+    book_data = response.json()
+    assert book_data["status"] == "parsed"
+    assert book_data["page_count"] > 0
 ```
 
-### 5. 테스트 마커 사용
-
-```python
-# pytest.ini 또는 conftest.py
-[pytest]
-markers =
-    unit: 단위 테스트 (모킹 허용)
-    integration: 통합 테스트 (실제 DB 사용)
-    e2e: E2E 테스트 (실제 데이터만, Mock 사용 금지)
-    slow: 실행 시간이 긴 테스트
-
-# 테스트 실행
-pytest -m unit          # 단위 테스트만
-pytest -m integration   # 통합 테스트만
-pytest -m e2e           # E2E 테스트만
-pytest -m "not slow"    # 느린 테스트 제외
-```
-
-### 6. 에러 케이스 테스트
-
-```python
-def test_upload_invalid_file_format(client):
-    """잘못된 파일 형식 업로드 테스트"""
-    response = client.post(
-        "/api/books/upload",
-        files={"file": ("test.txt", b"invalid content", "text/plain")}
-    )
-    assert response.status_code == 400
-    assert "invalid" in response.json()["detail"].lower()
-
-def test_get_nonexistent_book(client):
-    """존재하지 않는 책 조회 테스트"""
-    response = client.get("/api/books/99999")
-    assert response.status_code == 404
-```
+**⚠️ 주의사항:**
+- E2E 테스트는 반드시 실제 서버를 띄워서 실행 (`conftest_e2e.py`의 `test_server` fixture 사용)
+- `TestClient` 사용 금지 (백그라운드 작업이 제대로 실행되지 않음)
+- `httpx.Client`로 실제 HTTP 요청
+- 서비스를 직접 호출하여 백그라운드 작업을 우회하는 방식 금지
+- 백그라운드 작업이 실제로 실행되고 완료되는지 반드시 검증
 
 ## 테스트 실행 방법
 
-### 기본 실행
-
 ```powershell
-# 모든 테스트 실행
-poetry run pytest backend/tests/
-
-# 특정 파일 실행
-poetry run pytest backend/tests/test_models.py
-
-# 특정 테스트 함수 실행
-poetry run pytest backend/tests/test_models.py::test_book_creation
-
-# 상세 출력
-poetry run pytest backend/tests/ -v
-```
-
-### 커버리지 포함 실행
-
-```powershell
-# 커버리지 리포트 생성
-poetry run pytest --cov=backend --cov-report=html backend/tests/
-
-# HTML 리포트 확인
-# htmlcov/index.html 열기
-
-# 터미널에 커버리지 출력
-poetry run pytest --cov=backend --cov-report=term backend/tests/
-```
-
-### 테스트 마커로 필터링
-
-```powershell
-# E2E 테스트만 실행 (실제 API 호출)
+# E2E 테스트 실행 (실제 서버 실행, 실제 API 호출)
 poetry run pytest -m e2e backend/tests/
 
-# 단위 테스트만 실행 (빠른 실행)
-poetry run pytest -m unit backend/tests/
-
-# 느린 테스트 제외
-poetry run pytest -m "not slow" backend/tests/
+# 커버리지 포함 실행
+poetry run pytest -m e2e --cov=backend --cov-report=html backend/tests/
 ```
 
 ## Checklist
 
-### 새 모듈 테스트 작성 시
+### E2E 테스트 작성 시
 
-#### 단위 테스트
-- [ ] 모든 public 메서드에 대한 테스트 작성
-- [ ] 정상 케이스 테스트
-- [ ] 에러 케이스 테스트
-- [ ] 엣지 케이스 테스트 (빈 값, None, 경계값)
-- [ ] 외부 의존성은 모킹
-- [ ] 테스트 함수명은 명확하게 (`test_<function>_<scenario>`)
-
-#### 통합 테스트
-- [ ] 모듈 간 연동 테스트
-- [ ] 실제 DB 사용 (테스트 DB)
-- [ ] API 엔드포인트 통합 테스트
-- [ ] 응답 스키마 검증
-- [ ] DB 데이터 정합성 검증
-
-#### E2E 테스트
+- [ ] **실제 서버 실행** (`conftest_e2e.py`의 `test_server` fixture 사용)
 - [ ] **실제 데이터만 사용** (Mock 사용 절대 금지)
+- [ ] **프로덕션 플로우와 동일하게 검증** (실제 HTTP 요청 사용, `httpx.Client`)
+- [ ] **백그라운드 작업 검증** (실제로 실행되고 완료되는지 확인)
+- [ ] `TestClient` 사용 금지 (백그라운드 작업이 제대로 실행되지 않음)
 - [ ] 실제 외부 API 연동 (Upstage, OpenAI)
 - [ ] 실제 PDF 파일 사용
 - [ ] 전체 플로우 검증
 - [ ] 각 단계별 데이터 정합성 검증
 - [ ] `@pytest.mark.e2e` 마커 추가
+- [ ] **테스트를 위한 테스트 금지** (서비스 직접 호출로 우회 금지)
 
 ### 테스트 커버리지 목표
 
@@ -397,19 +210,30 @@ poetry run pytest -m "not slow" backend/tests/
   - StructureBuilder: 90% 이상
   - SummaryService: 90% 이상
 
-### E2E 테스트 필수 원칙
-
-- [ ] **Mock 사용 절대 금지**: 모든 E2E 테스트는 실제 데이터만 사용
-- [ ] 실제 외부 API 연동: Upstage API, OpenAI API 실제 호출
-- [ ] 실제 PDF 파일 사용: 테스트용 샘플 PDF 파일 준비
-- [ ] 실제 DB 데이터 검증: SQLite에 실제 저장된 데이터 검증
-- [ ] 다양한 시나리오 테스트: 최소 3가지 시나리오
-
 ## Common Pitfalls
 
 ### ❌ 피해야 할 것
 
-1. **E2E 테스트에서 Mock 사용**:
+1. **E2E 테스트에서 서비스 직접 호출 (백그라운드 작업 우회)**:
+```python
+# BAD - 프로덕션 플로우와 다른 방식
+def test_e2e_pdf_parsing(self, e2e_client, db_session):
+    response = e2e_client.post("/api/books/upload", files={"file": f})
+    book_id = response.json()["book_id"]
+    
+    # ❌ 서비스를 직접 호출하여 백그라운드 작업 우회
+    parsing_service = ParsingService(db_session)
+    book = parsing_service.parse_book(book_id)  # 프로덕션 플로우와 다름
+    
+    # ✅ GOOD: 실제 HTTP 요청으로 상태 확인하고 백그라운드 작업 완료 대기
+    while True:
+        response = e2e_client.get(f"/api/books/{book_id}")
+        if response.json()["status"] == "parsed":
+            break
+        time.sleep(2)
+```
+
+2. **E2E 테스트에서 Mock 사용**:
 ```python
 # BAD - E2E 테스트에서 모킹
 @patch('backend.parsers.upstage_api_client.requests.post')
@@ -417,77 +241,28 @@ def test_e2e_full_pipeline(self, mock_post):  # ❌ Mock 사용 금지
     ...
 ```
 
-2. **단위 테스트에서 실제 API 호출**:
+3. **TestClient 사용**:
 ```python
-# BAD - 단위 테스트에서 실제 API 호출
-def test_parse_pdf(self):
-    client = UpstageAPIClient(api_key=os.getenv("UPSTAGE_API_KEY"))
-    result = client.parse_pdf("real.pdf")  # ❌ 실제 API 호출
-```
+# BAD - TestClient는 백그라운드 작업이 제대로 실행되지 않음
+def test_e2e_pdf_parsing(self, client: TestClient):  # ❌ TestClient 사용 금지
+    ...
 
-3. **테스트 격리 부족**:
-```python
-# BAD - 테스트 간 상태 공유
-book_id = None  # 전역 변수
-
-def test_create_book():
-    global book_id
-    book_id = create_book()
+# GOOD - 실제 서버를 띄워서 httpx.Client 사용
+def test_e2e_pdf_parsing(self, e2e_client: httpx.Client):  # ✅
+    ...
 ```
 
 ### ✅ 권장 사항
 
-1. **E2E 테스트는 실제 데이터만**:
+1. **E2E 테스트는 실제 서버 실행, 실제 데이터만, 프로덕션 플로우와 동일하게**:
 ```python
-# GOOD - 실제 데이터 사용
+# GOOD - 실제 서버 실행, 실제 데이터 사용, 프로덕션 플로우와 동일
 @pytest.mark.e2e
-def test_full_pipeline_e2e(self, client, sample_pdf_path):
-    # 실제 파일, 실제 API 사용
+def test_full_pipeline_e2e(self, e2e_client: httpx.Client, sample_pdf_path):
     with open(sample_pdf_path, "rb") as f:
-        response = client.post("/api/books/upload", files={"file": f})
-```
-
-2. **단위 테스트는 완전히 격리**:
-```python
-# GOOD - 모킹으로 격리
-@patch('requests.post')
-def test_parse_pdf_mocked(self, mock_post):
-    mock_post.return_value.json.return_value = {...}
-    # 테스트 실행
-```
-
-3. **테스트 픽스처 활용**:
-```python
-# GOOD - 픽스처로 격리
-@pytest.fixture
-def sample_book(db_session):
-    book = Book(...)
-    db_session.add(book)
-    db_session.commit()
-    return book
-
-def test_get_book(client, sample_book):
-    response = client.get(f"/api/books/{sample_book.id}")
-    assert response.status_code == 200
-```
-
-## 테스트 데이터 준비
-
-### 샘플 PDF 파일
-
-- 위치: `backend/tests/fixtures/`
-- 크기: 작은 샘플 PDF (10페이지 이하 권장)
-- 형식: 다양한 형식 준비 (한국어, 영어 등)
-- 참고: 실제 API 호출이므로 비용 고려
-
-### 테스트 DB 설정
-
-```python
-# 테스트용 in-memory SQLite
-TEST_DATABASE_URL = "sqlite:///:memory:"
-
-# 또는 별도 테스트 DB 파일
-TEST_DATABASE_URL = "sqlite:///test_books.db"
+        files = {"file": ("sample.pdf", f, "application/pdf")}
+        response = e2e_client.post("/api/books/upload", files=files)
+    # 백그라운드 작업 완료 대기
 ```
 
 ## References
