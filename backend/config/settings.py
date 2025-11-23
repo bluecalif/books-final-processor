@@ -1,0 +1,32 @@
+"""애플리케이션 설정"""
+from pydantic_settings import BaseSettings
+from pathlib import Path
+
+
+class Settings(BaseSettings):
+    """애플리케이션 설정"""
+    
+    # API 키
+    upstage_api_key: str
+    openai_api_key: str
+    
+    # 데이터베이스
+    database_url: str = ""
+    
+    # 파일 저장 경로
+    upload_dir: Path = Path(__file__).parent.parent.parent / "data" / "uploads"
+    cache_dir: Path = Path(__file__).parent.parent.parent / "data" / "cache"
+    
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        case_sensitive = False
+
+
+# 전역 설정 인스턴스
+settings = Settings()
+
+# 디렉토리 생성
+settings.upload_dir.mkdir(parents=True, exist_ok=True)
+settings.cache_dir.mkdir(parents=True, exist_ok=True)
+
