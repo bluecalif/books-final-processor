@@ -30,11 +30,11 @@
 
 ### 6. 양면 분리 로직
 - **참고 파일**: `_split_pages_by_side()` 메서드 포함
-- **현재 프로젝트**: 필요 여부 확인 필요 (현재 프로젝트에는 없을 수 있음)
+- **현재 프로젝트**: 동일하게 적용 (참고 파일과 동일하게 구현)
 
 ### 7. clean_output 옵션
 - **참고 파일**: `clean_output` 옵션으로 불필요한 필드 제거
-- **현재 프로젝트**: 필요 여부 확인 필요
+- **현재 프로젝트**: 동일하게 적용 (참고 파일과 동일하게 구현)
 
 ## 클래스명/함수명 매핑 테이블
 
@@ -64,14 +64,15 @@
 | `_extract_text_from_html()` | `_extract_text_from_html()` | 동일 (유지) |
 | `_extract_font_size()` | `_extract_font_size()` | 동일 (유지) |
 | `_calculate_bbox()` | `_calculate_bbox()` | 동일 (유지) |
-| `_split_pages_by_side()` | - | 필요 여부 확인 필요 |
-| `_clean_pages()` | - | 필요 여부 확인 필요 |
+| `_split_pages_by_side()` | `_split_pages_by_side()` | 동일하게 적용 |
+| `_clean_pages()` | `_clean_pages()` | 동일하게 적용 |
 
 **변경 필요 사항**:
 - 이모지 제거, 로깅 형식 변경
 - 설정 관리: `Settings` 클래스 사용
 - `CacheManager` 통합 확인
-- 양면 분리 로직 필요 여부 확인
+- 양면 분리 로직 동일하게 적용
+- clean_output 옵션 동일하게 적용
 
 ### CacheManager
 
@@ -139,7 +140,8 @@
    - 참고 파일 기반으로 재구현
    - 이모지 제거, 로깅 형식 변경
    - `CacheManager` 통합
-   - 양면 분리 로직 필요 여부 확인
+   - 양면 분리 로직 동일하게 적용 (`_split_pages_by_side()`)
+   - clean_output 옵션 동일하게 적용 (`_clean_pages()`)
 
 ## 검증 체크리스트
 

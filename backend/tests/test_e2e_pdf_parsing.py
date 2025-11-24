@@ -9,8 +9,8 @@ from datetime import datetime
 import httpx
 from backend.config.settings import settings
 
-# 실제 PDF 파일 경로 (10페이지 PDF로 변경)
-TEST_PDF_PATH = Path(__file__).parent.parent.parent / "data" / "input" / "1등의 통찰_10p.pdf"
+# 실제 PDF 파일 경로 (전체 PDF로 최종 확인)
+TEST_PDF_PATH = Path(__file__).parent.parent.parent / "data" / "input" / "1등의 통찰.pdf"
 
 # 로그 디렉토리
 LOG_DIR = Path(__file__).parent.parent.parent / "data" / "test_results"

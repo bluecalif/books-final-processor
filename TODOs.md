@@ -14,12 +14,12 @@
 
 > 상세 상황: `PROJECT_STATUS.md` 참고
 
-### 전체 진행률: 약 33% (Phase 1 완료, Phase 2 재구현 필요)
+### 전체 진행률: 약 50% (Phase 1, Phase 2 완료)
 
 | Phase | 제목 | 진행률 | 상태 |
 |-------|------|-------|------|
 | Phase 1 | 프로젝트 기초 및 환경 설정 | 100% | 완료 |
-| Phase 2 | PDF 파싱 모듈 (Upstage API 연동) | 0% | **재구현 필요** (참고 파일 기반으로 재구현) |
+| Phase 2 | PDF 파싱 모듈 (Upstage API 연동) | 100% | **완료** (참고 파일 기반 재구현, E2E 테스트 통과) |
 | Phase 3 | 구조 분석 모듈 | 0% | **대기** (Phase 2 완료 후 시작) |
 | Phase 4 | 요약 모듈 | 0% | 미시작 |
 | Phase 5 | 프론트엔드 (Next.js) | 0% | 미시작 |
@@ -156,7 +156,7 @@ frontend/
 
 ### Phase 2: PDF 파싱 모듈 (Upstage API 연동)
 
-**⚠️ 현재 상태**: **재구현 필요** (80% 완료했으나 캐싱 문제 발견, 참고 파일 기반으로 재구현)
+**✅ 현재 상태**: **완료** (참고 파일 기반 재구현 완료, E2E 테스트 통과, 캐싱 시스템 정상 작동)
 
 **목표**: Upstage API를 사용한 PDF 파싱 기능 구현
 
@@ -273,7 +273,7 @@ frontend/
 - [x] 단계별 검증: 캐시 저장 동작 확인 (코드 검토 완료, E2E 테스트에서 최종 검증 예정) ✅
 - [x] **Git 커밋**: `git add .` → `git commit -m "[Phase 2] PDFParser 재구현 완료 (캐싱 통합)"` → `git push origin main` ✅
 
-#### 2.3 업로드 API 구현
+#### 2.5 업로드 API 구현
 - [x] `backend/api/schemas/book.py` 생성
   - `BookCreate`: 업로드 요청 스키마 ✅ 완료
   - `BookResponse`: 책 응답 스키마 ✅ 완료
@@ -289,28 +289,29 @@ frontend/
 - [x] `backend/api/main.py`에 books 라우터 등록 ✅ 완료
 - [x] 백그라운드 작업 구현: `backend/api/services/parsing_service.py` 생성, `BackgroundTasks`로 자동 파싱 ✅ 완료
 
-#### 2.5 PDF 파싱 모듈 테스트
+#### 2.6 PDF 파싱 모듈 테스트
 - [x] **E2E 테스트 환경 설정**:
-  - `backend/tests/conftest_e2e.py` 생성 (실제 서버 실행 fixture) ✅ 완료
+  - `backend/tests/conftest.py` 생성 (실제 서버 실행 fixture) ✅ 완료
   - `backend/tests/test_e2e_pdf_parsing.py` 생성 (실제 서버 실행, `httpx.Client` 사용) ✅ 완료
-- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
-- [ ] **E2E 테스트 실행 및 검증** (⚠️ 실제 서버 실행, 실제 데이터만):
-  - 실제 Upstage API 연동, PDF 업로드 → 파싱 → DB 저장 전체 플로우, 상태 변경 검증 (`uploaded` → `parsed`)
-  - API 응답만 검증 (DB 직접 조회 제거, 서버와 다른 DB 문제 해결)
-  - **캐시 저장 검증 필수**: 파싱 후 `data/cache/upstage/`에 캐시 파일이 생성되는지 확인
-    - 캐시 파일 존재 확인
-    - 캐시 파일 내용 검증 (JSON 형식, 필수 필드 존재)
-    - 캐시 파일 크기 확인 (0 bytes가 아닌지)
-  - **캐시 재사용 검증 필수**: 두 번째 파싱 시 캐시 히트 확인 (API 호출 없이 캐시 사용)
-    - 동일 PDF 파일로 두 번째 파싱 시도
-    - 로그에서 "Cache hit" 메시지 확인
-    - API 호출 없이 캐시에서 결과 반환 확인
-  - **변수명/함수명 Align 검증**: 현재 프로젝트 규칙 준수 확인
-  - **로깅 형식 검증**: `[INFO]`, `[ERROR]` 형식 사용 확인 (이모지 없음)
+- [x] **Git 작업 전**: `git status` → `git pull origin main` 확인 ✅ 완료
+- [x] **E2E 테스트 실행 및 검증** (⚠️ 실제 서버 실행, 실제 데이터만): ✅ 완료
+  - 실제 Upstage API 연동, PDF 업로드 → 파싱 → DB 저장 전체 플로우, 상태 변경 검증 (`uploaded` → `parsed`) ✅ 완료
+  - API 응답만 검증 (DB 직접 조회 제거, 서버와 다른 DB 문제 해결) ✅ 완료
+  - **캐시 저장 검증 필수**: 파싱 후 `data/cache/upstage/`에 캐시 파일이 생성되는지 확인 ✅ 완료
+    - 캐시 파일 존재 확인 ✅ 완료
+    - 캐시 파일 내용 검증 (JSON 형식, 필수 필드 존재) ✅ 완료
+    - 캐시 파일 크기 확인 (0 bytes가 아닌지) ✅ 완료
+  - **캐시 재사용 검증 필수**: 두 번째 파싱 시 캐시 히트 확인 (API 호출 없이 캐시 사용) ✅ 완료
+    - 동일 PDF 파일로 두 번째 파싱 시도 ✅ 완료
+    - 로그에서 "Cache hit" 메시지 확인 ✅ 완료
+    - API 호출 없이 캐시에서 결과 반환 확인 ✅ 완료
+  - **양면 분리 검증**: 원본 페이지 수 → 분리 후 페이지 수 확인 (10페이지 → 20페이지, 142페이지 → 284페이지) ✅ 완료
+  - **변수명/함수명 Align 검증**: 현재 프로젝트 규칙 준수 확인 ✅ 완료
+  - **로깅 형식 검증**: `[INFO]`, `[ERROR]` 형식 사용 확인 (이모지 없음) ✅ 완료
   - 100페이지 초과 PDF: 분할 파싱 동작, 페이지 번호 조정, Elements 병합 검증 (추후 추가 가능)
   - 에러 케이스: Upstage API 실패, 네트워크 에러, 파일 읽기 실패, 잘못된 파일 형식 (추후 추가 가능)
   - `backend/tests/fixtures/` 디렉토리 생성 (테스트용 샘플 PDF, 선택)
-- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 2] E2E 테스트 및 검증 완료"` → `git push origin main`
+- [x] **Git 커밋**: `git add .` → `git commit -m "[Phase 2] E2E 테스트 및 검증 완료"` → `git push origin main` ✅ 완료
 
 **⚠️ 검증 기준**:
 - ✅ E2E 테스트 통과 (실제 서버 실행, 실제 데이터 사용)

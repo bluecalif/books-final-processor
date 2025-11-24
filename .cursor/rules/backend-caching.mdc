@@ -1,0 +1,344 @@
+---
+alwaysApply: true
+description: 백엔드 캐싱 시스템 규칙 (Upstage API, OpenAI 요약 캐시)
+---
+
+# Backend 캐싱 규칙
+
+## Overview
+
+비용 절약 및 성능 향상을 위한 로컬 캐싱 시스템입니다. Upstage API 파싱 결과와 OpenAI 요약 결과를 로컬 파일 시스템에 저장하여 재사용합니다.
+
+## 핵심 원칙
+
+### 캐시 저장 필수
+- **Upstage API 파싱 결과**: 반드시 캐시 저장 (비용 절약)
+- **OpenAI 요약 결과**: 반드시 캐시 저장 (비용 절약, 재사용)
+- **로컬 파일 저장**: `data/cache/` 디렉토리에 JSON 파일로 저장
+- **파일 해시 기반 키**: 같은 파일 내용이면 경로 무관하게 캐시 재사용
+
+### 캐시 사용 원칙
+- **구조 분석기**: `use_cache=True`로 호출하여 캐시된 파싱 결과 사용
+- **요약 모듈**: `use_cache=True`로 호출하여 캐시된 요약 결과 사용
+- **테스트 환경**: 테스트에서도 캐시 저장 및 재사용 (실제 API 비용 절약)
+
+## Domain Knowledge
+
+### 캐시 저장 위치
+- **Upstage API 캐시**: `data/cache/upstage/` (파일 해시 기반)
+- **OpenAI 요약 캐시**: `data/cache/summaries/` (페이지별, 챕터별)
+- **설정**: `backend/config/settings.py`의 `cache_dir` 사용
+
+### 캐시 키 생성
+- **PDF 파일**: MD5 해시 기반 (파일 내용 기준)
+- **요약**: 콘텐츠 해시 기반 (텍스트 내용 기준)
+- 같은 내용이면 같은 키 → 캐시 재사용
+
+## Standards & Conventions
+
+### CacheManager 구현
+
+```python
+# backend/parsers/cache_manager.py
+class CacheManager:
+    """Upstage API 결과 캐싱 매니저"""
+    
+    def __init__(self, cache_dir: Optional[Path] = None):
+        self.cache_dir = cache_dir or settings.cache_dir / "upstage"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    def get_file_hash(self, pdf_path: str) -> str:
+        """PDF 파일의 MD5 해시 생성"""
+        # 청크 단위로 읽어서 메모리 효율적 처리
+    
+    def get_cache_key(self, pdf_path: str) -> str:
+        """파일 내용 기반 캐시 키 생성"""
+        return self.get_file_hash(pdf_path)
+    
+    def get_cached_result(self, pdf_path: str) -> Optional[Dict[str, Any]]:
+        """캐시된 결과 조회"""
+        # 캐시 파일이 있으면 로드, 없으면 None 반환
+    
+    def save_cache(self, pdf_path: str, result: Dict[str, Any]) -> None:
+        """결과를 캐시에 저장"""
+        # 임시 파일로 안전하게 저장 후 원자적 이동
+```
+
+### PDFParser 캐시 사용
+
+```python
+# backend/parsers/pdf_parser.py
+class PDFParser:
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_client = UpstageAPIClient(api_key)
+        self.cache_manager = CacheManager()  # 캐시 매니저 초기화
+    
+    def parse_pdf(self, file_path: str, use_cache: bool = True) -> Dict[str, Any]:
+        # 1. 캐시 확인
+        if use_cache:
+            cached_result = self.cache_manager.get_cached_result(file_path)
+            if cached_result:
+                logger.info(f"[INFO] Using cached result for {file_path}")
+                return cached_result
+        
+        # 2. API 호출
+        api_response = self.api_client.parse_pdf(file_path)
+        
+        # 3. 구조화
+        structured_elements = self._structure_elements(api_response)
+        pages = self._group_by_page(structured_elements)
+        
+        result = {
+            "pages": pages,
+            "total_pages": len(pages),
+            "total_elements": len(structured_elements),
+            "metadata": api_response.get("metadata", {}),
+        }
+        
+        # 4. 캐시 저장
+        if use_cache:
+            # Upstage API 원본 응답 저장 (구조화 전)
+            self.cache_manager.save_cache(file_path, api_response)
+            logger.info(f"[INFO] Cached result for {file_path}")
+        
+        return result
+```
+
+### 요약 모듈 캐시 사용
+
+```python
+# backend/summarizers/summary_cache_manager.py
+class SummaryCacheManager:
+    """OpenAI 요약 결과 캐싱 매니저"""
+    
+    def __init__(self, cache_dir: Optional[Path] = None):
+        self.cache_dir = cache_dir or settings.cache_dir / "summaries"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    def get_content_hash(self, content: str) -> str:
+        """텍스트 내용의 MD5 해시 생성"""
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+    
+    def get_cached_summary(self, content_hash: str, summary_type: str) -> Optional[str]:
+        """캐시된 요약 조회"""
+        # summary_type: "page" 또는 "chapter"
+        cache_file = self.cache_dir / f"{summary_type}_{content_hash}.json"
+        if cache_file.exists():
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                return json.load(f).get("summary_text")
+        return None
+    
+    def save_cache(self, content_hash: str, summary_type: str, summary_text: str) -> None:
+        """요약 결과 캐시 저장"""
+        cache_file = self.cache_dir / f"{summary_type}_{content_hash}.json"
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                "summary_text": summary_text,
+                "summary_type": summary_type,
+                "cached_at": time.time()
+            }, f, ensure_ascii=False, indent=2)
+```
+
+## Implementation Patterns
+
+### Pattern 1: PDFParser 캐시 통합
+
+```python
+# backend/parsers/pdf_parser.py
+from backend.parsers.cache_manager import CacheManager
+
+class PDFParser:
+    def __init__(self, api_key: Optional[str] = None):
+        if api_key is None:
+            api_key = settings.upstage_api_key
+        self.api_client = UpstageAPIClient(api_key)
+        self.cache_manager = CacheManager()  # 캐시 매니저 초기화
+    
+    def parse_pdf(self, file_path: str, use_cache: bool = True) -> Dict[str, Any]:
+        # 캐시 확인
+        if use_cache:
+            cached_result = self.cache_manager.get_cached_result(file_path)
+            if cached_result:
+                logger.info(f"[INFO] Cache hit for {file_path}")
+                # 캐시된 API 응답을 구조화
+                structured_elements = self._structure_elements(cached_result)
+                pages = self._group_by_page(structured_elements)
+                return {
+                    "pages": pages,
+                    "total_pages": len(pages),
+                    "total_elements": len(structured_elements),
+                    "metadata": cached_result.get("metadata", {}),
+                }
+        
+        # API 호출
+        logger.info(f"[INFO] Parsing PDF: {file_path}")
+        api_response = self.api_client.parse_pdf(file_path)
+        
+        # 구조화
+        structured_elements = self._structure_elements(api_response)
+        pages = self._group_by_page(structured_elements)
+        
+        result = {
+            "pages": pages,
+            "total_pages": len(pages),
+            "total_elements": len(structured_elements),
+            "metadata": api_response.get("metadata", {}),
+        }
+        
+        # 캐시 저장 (API 원본 응답 저장)
+        if use_cache:
+            self.cache_manager.save_cache(file_path, api_response)
+            logger.info(f"[INFO] Cached API response for {file_path}")
+        
+        return result
+```
+
+### Pattern 2: 요약 모듈 캐시 통합
+
+```python
+# backend/summarizers/page_summarizer.py
+from backend.summarizers.summary_cache_manager import SummaryCacheManager
+
+class PageSummarizer:
+    def __init__(self, enable_cache: bool = True):
+        self.cache_manager = SummaryCacheManager() if enable_cache else None
+    
+    def summarize_page(
+        self, 
+        page_text: str, 
+        book_context: Optional[str] = None,
+        use_cache: bool = True
+    ) -> str:
+        # 캐시 확인
+        if use_cache and self.cache_manager:
+            content_hash = self.cache_manager.get_content_hash(page_text)
+            cached_summary = self.cache_manager.get_cached_summary(
+                content_hash, "page"
+            )
+            if cached_summary:
+                logger.info(f"[INFO] Cache hit for page summary")
+                return cached_summary
+        
+        # LLM 호출
+        summary = self.chain.summarize_page(page_text, book_context)
+        
+        # 캐시 저장
+        if use_cache and self.cache_manager:
+            content_hash = self.cache_manager.get_content_hash(page_text)
+            self.cache_manager.save_cache(content_hash, "page", summary)
+            logger.info(f"[INFO] Cached page summary")
+        
+        return summary
+```
+
+### Pattern 3: 캐시 디렉토리 구조
+
+```
+data/cache/
+├── upstage/          # Upstage API 파싱 결과
+│   ├── {hash1}.json
+│   ├── {hash2}.json
+│   └── ...
+└── summaries/       # OpenAI 요약 결과
+    ├── page_{hash1}.json
+    ├── page_{hash2}.json
+    ├── chapter_{hash1}.json
+    └── ...
+```
+
+## Checklist
+
+### 캐시 구현 시
+- [ ] CacheManager 클래스 생성 (`backend/parsers/cache_manager.py`)
+- [ ] PDFParser에 캐시 로직 통합 (캐시 확인 → API 호출 → 캐시 저장)
+- [ ] SummaryCacheManager 클래스 생성 (`backend/summarizers/summary_cache_manager.py`)
+- [ ] PageSummarizer에 캐시 로직 통합
+- [ ] ChapterSummarizer에 캐시 로직 통합
+- [ ] `settings.cache_dir` 사용 (기본값: `data/cache`)
+- [ ] 파일 해시 기반 캐시 키 생성
+- [ ] 임시 파일로 안전하게 저장 후 원자적 이동
+- [ ] 캐시 히트/미스 로깅
+
+### 캐시 사용 시
+- [ ] 구조 분석기: `use_cache=True`로 호출
+- [ ] 요약 모듈: `use_cache=True`로 호출
+- [ ] 테스트 환경: 캐시 저장 및 재사용
+- [ ] 캐시 디렉토리 자동 생성 (`mkdir(parents=True, exist_ok=True)`)
+
+## Common Pitfalls
+
+### ❌ 피해야 할 것
+
+1. **캐시 저장 누락**:
+```python
+# BAD - 캐시 저장 안 함
+def parse_pdf(self, file_path: str, use_cache: bool = True):
+    api_response = self.api_client.parse_pdf(file_path)
+    # 캐시 저장 누락!
+    return result
+```
+
+2. **캐시 확인 누락**:
+```python
+# BAD - 캐시 확인 안 함
+def parse_pdf(self, file_path: str, use_cache: bool = True):
+    # 캐시 확인 누락!
+    api_response = self.api_client.parse_pdf(file_path)
+    return result
+```
+
+3. **구조화된 결과 캐시 저장**:
+```python
+# BAD - 구조화된 결과를 캐시 저장 (원본 API 응답이 아님)
+def parse_pdf(self, file_path: str, use_cache: bool = True):
+    api_response = self.api_client.parse_pdf(file_path)
+    structured = self._structure_elements(api_response)
+    if use_cache:
+        self.cache_manager.save_cache(file_path, structured)  # ❌ 구조화된 결과 저장
+```
+
+### ✅ 권장 사항
+
+1. **API 원본 응답 캐시 저장**:
+```python
+# GOOD - API 원본 응답 저장
+def parse_pdf(self, file_path: str, use_cache: bool = True):
+    if use_cache:
+        cached = self.cache_manager.get_cached_result(file_path)
+        if cached:
+            # 캐시된 원본 응답을 구조화
+            return self._structure_from_api_response(cached)
+    
+    api_response = self.api_client.parse_pdf(file_path)
+    
+    if use_cache:
+        # 원본 API 응답 저장
+        self.cache_manager.save_cache(file_path, api_response)  # ✅
+    
+    return self._structure_from_api_response(api_response)
+```
+
+2. **캐시 히트/미스 로깅**:
+```python
+# GOOD - 캐시 상태 로깅
+if cached_result:
+    logger.info(f"[INFO] Cache hit for {file_path}")
+else:
+    logger.info(f"[INFO] Cache miss for {file_path}, calling API")
+```
+
+3. **안전한 캐시 저장**:
+```python
+# GOOD - 임시 파일로 안전하게 저장
+temp_file = cache_file.with_suffix('.tmp')
+with open(temp_file, 'w', encoding='utf-8') as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+temp_file.replace(cache_file)  # 원자적 이동
+```
+
+## References
+
+- Backend PDF parsing: `.cursor/rules/backend-pdf-parsing.mdc`
+- Backend summarization: `.cursor/rules/backend-summarization.mdc`
+- Settings: `backend/config/settings.py`
+- 선행 서비스: `docs/book-assistant_repomix_backend.md` (Line 2018-2204)

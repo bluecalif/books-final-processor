@@ -34,6 +34,11 @@ description: 백엔드 테스트 전략 및 규칙 (E2E 테스트만, 실제 서
    - ✅ 프로덕션과 동일한 플로우로 검증
    - ✅ 실제 사용자 시나리오와 동일하게 테스트
 
+4. **DB 직접 조회 금지**
+   - ⚠️ **중요**: 서버는 실제 파일 DB (`data/books.db`) 사용, 테스트는 메모리 DB (`:memory:`) 사용
+   - ❌ 테스트에서 `db_session.query()`로 직접 조회 (서로 다른 DB이므로 데이터 없음)
+   - ✅ API 응답만 검증 (프로덕션 플로우와 동일)
+
 ## Domain Knowledge
 
 ### E2E 테스트 원칙
@@ -56,8 +61,13 @@ pytest-cov          # 코드 커버리지 (선택)
 
 ### 테스트 파일 네이밍
 
-- 파일명: `test_e2e_<feature>.py`
-- 테스트 함수: `test_e2e_<feature>_<scenario>`
+- **테스트 파일**: `test_<feature>.py` 또는 `test_e2e_<feature>.py`
+- **테스트 함수**: `test_<scenario>()` 또는 `test_e2e_<scenario>()`
+- **Fixture 파일**: `conftest.py` 또는 `conftest_<type>.py` (예: `conftest_e2e.py`)
+  - ⚠️ **중요**: `conftest*.py` 파일은 `test_` 접두사를 사용하지 않음
+  - pytest가 자동으로 `conftest*.py` 파일을 발견하고 로드함
+  - `test_conftest.py`로 이름을 변경하면 pytest가 인식하지 못함
+  - 이것은 pytest의 표준 관행이며, 테스트 파일이 아닌 설정 파일임
 
 ### 테스트 마커
 
@@ -200,6 +210,7 @@ poetry run pytest -m e2e --cov=backend --cov-report=html backend/tests/
 - [ ] 각 단계별 데이터 정합성 검증
 - [ ] `@pytest.mark.e2e` 마커 추가
 - [ ] **테스트를 위한 테스트 금지** (서비스 직접 호출로 우회 금지)
+- [ ] **DB 직접 조회 금지** (서버와 테스트가 다른 DB 사용, API 응답만 검증)
 
 ### 테스트 커버리지 목표
 
@@ -252,6 +263,24 @@ def test_e2e_pdf_parsing(self, e2e_client: httpx.Client):  # ✅
     ...
 ```
 
+4. **E2E 테스트에서 DB 직접 조회**:
+```python
+# BAD - 서버와 테스트가 다른 DB를 사용하므로 데이터를 찾을 수 없음
+def test_e2e_pdf_parsing(self, e2e_client: httpx.Client, db_session):
+    response = e2e_client.post("/api/books/upload", files={"file": f})
+    book_id = response.json()["book_id"]
+    
+    # ❌ 테스트 DB에서 조회 (서버는 실제 파일 DB 사용)
+    book = db_session.query(Book).filter(Book.id == book_id).first()
+    assert book is not None  # ❌ None 반환 (다른 DB이므로)
+    
+    # ✅ GOOD: API 응답만 검증 (프로덕션 플로우와 동일)
+    book_response = e2e_client.get(f"/api/books/{book_id}")
+    assert book_response.status_code == 200
+    book_data = book_response.json()
+    assert book_data["status"] == "parsed"
+```
+
 ### ✅ 권장 사항
 
 1. **E2E 테스트는 실제 서버 실행, 실제 데이터만, 프로덕션 플로우와 동일하게**:
@@ -263,6 +292,28 @@ def test_full_pipeline_e2e(self, e2e_client: httpx.Client, sample_pdf_path):
         files = {"file": ("sample.pdf", f, "application/pdf")}
         response = e2e_client.post("/api/books/upload", files=files)
     # 백그라운드 작업 완료 대기
+```
+
+2. **API 응답만 검증 (DB 직접 조회 금지)**:
+```python
+# GOOD - API 응답으로만 검증 (서버와 테스트가 다른 DB 사용)
+@pytest.mark.e2e
+def test_e2e_pdf_parsing(e2e_client: httpx.Client):
+    # 업로드
+    response = e2e_client.post("/api/books/upload", files={"file": f})
+    book_id = response.json()["book_id"]
+    
+    # 상태 폴링 (백그라운드 작업 완료 대기)
+    while True:
+        response = e2e_client.get(f"/api/books/{book_id}")
+        if response.json()["status"] == "parsed":
+            break
+        time.sleep(2)
+    
+    # ✅ API 응답만 검증 (DB 직접 조회 금지)
+    book_data = e2e_client.get(f"/api/books/{book_id}").json()
+    assert book_data["status"] == "parsed"
+    assert book_data["page_count"] > 0
 ```
 
 ## References

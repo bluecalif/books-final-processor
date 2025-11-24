@@ -242,7 +242,58 @@ git status | Select-String "modified"        # 필터링
 
 **해결**: Python 코드에서 이모지 제거, `[OK]`, `[PASS]`, `[FAIL]` 같은 태그 사용
 
-**권장**: 모든 Python 스크립트에서 이모지 사용 금지
+#### 1.7.1 한글 파일명/문자열 처리
+
+**문제**: 한글 파일명 또는 문자열이 포함된 명령어 실행 시 실패
+
+```powershell
+# ❌ 실패
+python -c "from pypdf import PdfReader; reader = PdfReader(r'data\input\1등의 통찰.pdf')"
+Select-String -Pattern "CACHE_SAVE|서버 로그|파싱 완료"
+```
+
+**해결**:
+```powershell
+# ✅ Python 스크립트 파일 사용 (권장)
+poetry run python script.py
+
+# ✅ 세션 시작 시 인코딩 설정
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+chcp 65001
+
+# ✅ Select-String은 영문 패턴 사용
+Select-String -Pattern "CACHE_SAVE|server|parsing"
+```
+
+#### 1.7.2 Tee-Object 인코딩 파라미터
+
+**문제**: PowerShell 5.1에서 `Tee-Object -Encoding` 미지원
+
+```powershell
+# ❌ 실패
+Tee-Object -FilePath "output.log" -Encoding UTF8
+```
+
+**해결**:
+```powershell
+# ✅ Out-File 사용
+poetry run pytest ... | Out-File -FilePath "output.log" -Encoding UTF8
+```
+
+#### 1.7.3 파일 경로 처리
+
+**문제**: 한글 파일명 경로에서 변수 할당 실패
+
+**해결**:
+```powershell
+# ✅ 절대 경로 사용
+$pdfPath = (Resolve-Path "data\input\1등의 통찰.pdf").Path
+
+# ✅ 파일 존재 확인 후 처리
+$file = Get-ChildItem "path" | Select-Object -First 1
+if ($file) { Get-Content $file.FullName -Raw -Encoding UTF8 }
+```
 
 ---
 
@@ -551,6 +602,12 @@ git ls-files | Select-String "\.env"
 - `httpx.Client`로 실제 HTTP 요청
 - `TestClient` 사용 금지 (백그라운드 작업이 제대로 실행되지 않음)
 - 실제 데이터만 사용 (Mock 사용 절대 금지)
+
+**⚠️ 중요: DB 직접 조회 금지**:
+- 서버는 실제 파일 데이터베이스 사용 (프로덕션 DB)
+- 테스트는 메모리 데이터베이스 (`:memory:`) 사용
+- **서로 다른 DB이므로 테스트에서 DB 직접 조회 시 데이터를 찾을 수 없음**
+- **해결**: API 응답만 검증 (프로덕션 플로우와 동일)
 
 **참고**: 프로덕션 플로우와 동일하게 검증하여 배포 후 문제가 없음을 보장
 

@@ -15,11 +15,13 @@ Create project-specific rules based on user requirements and project context.
   - `TODOs.md` or similar - Current development plan
   - `package.json` or `pyproject.toml` - Tech stack and dependencies
   - Core source files in main directories (e.g., `src/`, `backend/`, `frontend/`)
+  - Test configuration files (e.g., `conftest.py`, `pytest.ini`, `pyproject.toml` test settings)
 - Identify:
   - Technology stack (frameworks, languages, tools)
   - Architecture patterns (MVC, microservices, monorepo, etc.)
   - Existing conventions (naming, file structure, testing)
   - Domain concepts and business logic
+  - Testing framework conventions (pytest fixtures, test discovery patterns)
 
 ### 3. Create Rule Files
 - Create `.cursor/rules/` directory if it doesn't exist
@@ -97,6 +99,19 @@ Brief explanation of the domain/feature and why these rules exist.
 - Use kebab-case: `feature-name.mdc`
 - Be specific: `api-authentication.mdc` not `auth.mdc`
 - Group related rules: `backend-api-design.mdc`, `backend-error-handling.mdc`
+
+#### Test File Naming (pytest)
+- **Test files**: Must start with `test_` prefix: `test_<feature>.py`
+- **Test functions**: Must start with `test_` prefix: `test_<scenario>()`
+- **Fixture files**: Use `conftest.py` (pytest standard, NOT `test_conftest.py`)
+  - `conftest.py`: General fixtures for all tests in the directory
+  - `conftest_e2e.py`: E2E-specific fixtures (also valid, pytest auto-discovers)
+  - These are **special pytest files** that don't follow the `test_` prefix rule
+  - pytest automatically discovers and loads `conftest*.py` files
+- **Why `conftest.py` doesn't start with `test_`**: 
+  - It's a pytest convention (not a test file, but a configuration file)
+  - pytest automatically discovers `conftest.py` files in test directories
+  - Renaming to `test_conftest.py` would break pytest's auto-discovery
 
 ### 7. Quality Checklist
 Before finalizing the rule file:

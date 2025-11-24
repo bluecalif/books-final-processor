@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.api.database import init_db
-from backend.api.routers import books
+from backend.api.routers import books, structure
 
 # 데이터베이스 초기화
 init_db()
@@ -25,6 +25,7 @@ app.add_middleware(
 
 # 라우터 등록
 app.include_router(books.router)
+app.include_router(structure.router)
 
 
 @app.get("/")

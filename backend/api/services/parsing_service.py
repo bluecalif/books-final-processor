@@ -60,10 +60,10 @@ class ParsingService:
             logger.info("=" * 80)
             raise ValueError(f"Book {book_id} is not in uploaded status. Current status: {book.status}")
 
-        # PDF 파싱
+        # PDF 파싱 (캐시 사용)
         logger.info("[CALL] self.pdf_parser.parse_pdf() 호출 시작")
         logger.info(f"[PARAM] file_path={book.source_file_path}")
-        parsed_data = self.pdf_parser.parse_pdf(book.source_file_path, use_cache=False)
+        parsed_data = self.pdf_parser.parse_pdf(book.source_file_path, use_cache=True)
         logger.info(f"[RETURN] parse_pdf() 반환값: pages 개수={len(parsed_data.get('pages', []))}, total_pages={parsed_data.get('total_pages', 0)}")
 
         # Pages 테이블에 저장
