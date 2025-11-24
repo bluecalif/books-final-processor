@@ -216,10 +216,12 @@ class CacheManager:
             logger.info(f"[CACHE_SAVE] 저장 완료: {pdf_path} (key: {cache_key})")
             
         except Exception as e:
-            logger.error(f"[CACHE_SAVE] 예외 발생: {e}")
-            logger.error(f"[CACHE_SAVE] 예외 타입: {type(e).__name__}")
-            logger.error(f"[CACHE_SAVE] 트레이스백:\n{traceback.format_exc()}")
-            raise
+            logger.error(f"[ERROR] Failed to cache result for {pdf_path}: {e}")
+            logger.error(f"[ERROR] Exception type: {type(e).__name__}")
+            logger.error(f"[ERROR] Traceback:\n{traceback.format_exc()}")
+            # 예외를 다시 발생시키지 않음 - 캐시 저장 실패가 전체 파싱을 막지 않도록
+            # 캐시는 비용 절약을 위한 것이므로 실패해도 파싱은 계속 진행
+            logger.warning(f"[WARNING] Cache save failed, but parsing will continue")
 
     def invalidate_cache(self, cache_key: str) -> None:
         """
