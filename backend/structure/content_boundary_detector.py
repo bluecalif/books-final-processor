@@ -1,33 +1,35 @@
 """
-본문 영역 탐지 모듈
+본문 영역 탐지 모듈 (Footer 기반, 개선 버전)
 
-Intro (표지, 서문) / Main (본문) / Notes (참고문헌, 부록) 영역을 분리합니다.
+Footer의 구조 판별자를 기준으로 서문/본문/종문 영역을 분리합니다.
+홀수 페이지(좌측)의 Footer를 우선적으로 확인하며, 챕터 표시 판별자와 페이지 번호를 구분합니다.
 """
 
 import re
 import logging
 from typing import Dict, Any, List, Optional
-from backend.config.constants import (
-    START_KEYWORDS,
-    END_KEYWORDS,
-    MAIN_START_PATTERNS,
-    MIN_PARAGRAPH_LENGTH,
-)
+from backend.config.constants import START_KEYWORDS, END_KEYWORDS
 
 logger = logging.getLogger(__name__)
 
 
 class ContentBoundaryDetector:
-    """본문 영역 경계 탐지 클래스"""
+    """본문 영역 경계 탐지 클래스 (Footer 기반, 개선 버전)"""
 
     def __init__(self):
         """경계 탐지기 초기화"""
-        # FooterAnalyzer 의존성 제거 (Phase 3에서는 불필요)
-        pass
+        # 챕터 패턴 (챕터 표시 판별자 인식용)
+        self.chapter_patterns = [
+            re.compile(r"제\s*\d+\s*[장강부]"),  # 제1장, 제1강, 제1부
+            re.compile(r"CHAPTER\s*\d+", re.IGNORECASE),  # Chapter 1, Chapter1
+            re.compile(r"Part\s*\d+", re.IGNORECASE),  # Part 1, Part1
+            re.compile(r"^\d+\s*[장강부]"),  # 1장, 1강
+            re.compile(r"^\d+\.\s*[가-힣]"),  # 1. 제목, 1.제목
+        ]
 
     def detect_boundaries(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        서문(start)/본문(main)/종문(end) 경계 탐지
+        서문(start)/본문(main)/종문(end) 경계 탐지 (Footer 기반, 개선 버전)
 
         Returns:
             {
@@ -37,20 +39,17 @@ class ContentBoundaryDetector:
                 "confidence": {"start": 0.9, "main": 1.0, "end": 0.8}
             }
         """
-        logger.info("[INFO] Detecting content boundaries (서문/본문/종문)...")
+        logger.info("[INFO] Detecting content boundaries (Footer 기반, 개선 버전)...")
 
         pages = parsed_data.get("pages", [])
         if not pages:
             return self._default_result()
 
-        # Footer 정보는 빈 dict로 처리 (FooterAnalyzer 제거)
-        footer_info = {}
-
-        # 1. 본문 시작 페이지 탐지
-        main_start = self._detect_main_start(pages, footer_info)
+        # 1. 개선된 본문 시작 페이지 탐지 (챕터 표시 판별자 기준)
+        main_start = self._detect_main_start_improved(pages)
 
         # 2. 종문 시작 페이지 탐지
-        end_start = self._detect_notes_start(pages, main_start, footer_info)
+        end_start = self._detect_notes_start_improved(pages, main_start)
 
         # 3. 경계 확정
         start_pages = list(range(1, main_start))
@@ -76,279 +75,286 @@ class ContentBoundaryDetector:
             },
             "confidence": {
                 "start": 0.8 if start_pages else 0.0,
-                "main": 1.0,
+                "main": 1.0 if main_pages else 0.0,
                 "end": 0.8 if end_pages else 0.0,
             },
         }
 
-        logger.info("[INFO] Boundaries detected:")
+        logger.info("[INFO] Boundaries detected (Footer 기반, 개선 버전):")
         logger.info(
-            f"  서문(start): pages {start_pages[0] if start_pages else None}-{start_pages[-1] if start_pages else None} ({len(start_pages)} pages)"
+            f"  서문(start): pages {result['start']['start']}-{result['start']['end']} ({len(start_pages)} pages)"
         )
         logger.info(
-            f"  본문(main):  pages {main_pages[0]}-{main_pages[-1]} ({len(main_pages)} pages)"
+            f"  본문(main):  pages {result['main']['start']}-{result['main']['end']} ({len(main_pages)} pages)"
         )
         logger.info(
-            f"  종문(end): pages {end_pages[0] if end_pages else None}-{end_pages[-1] if end_pages else None} ({len(end_pages)} pages)"
+            f"  종문(end): pages {result['end']['start']}-{result['end']['end']} ({len(end_pages)} pages)"
         )
 
         return result
 
-    def _detect_main_start(self, pages: List[Dict], footer_info: Dict) -> int:
+    def _detect_main_start_improved(self, pages: List[Dict]) -> int:
         """
-        본문 시작 페이지 탐지
+        개선된 본문 시작 페이지 탐지
+
+        로직:
+        1. 홀수 페이지의 Footer에서 챕터 표시 판별자 찾기
+        2. 첫 번째 챕터 표시가 나타나는 페이지를 본문 시작으로 판단
+        3. 서문 키워드가 있는 페이지는 제외
+
+        Args:
+            pages: 페이지 리스트
 
         Returns:
             본문 시작 페이지 번호 (1-indexed)
         """
-        logger.info("[INFO] Detecting main content start...")
-
-        best_score = 0.0
-        best_page = 3  # 최소 3페이지부터 시작 (표지 제외)
+        logger.info("[INFO] Detecting main content start (개선 버전: 챕터 표시 판별자 기준)...")
 
         for page in pages:
-            page_num = page["page_number"]
+            page_num = page.get("page_number", 0)
 
             # 표지는 제외 (1-2페이지)
             if page_num <= 2:
                 continue
 
-            score = self._calculate_main_start_score(page, footer_info)
+            # 홀수 페이지만 처리
+            if page_num % 2 == 0:
+                continue
 
-            if score > best_score:
-                best_score = score
-                best_page = page_num
+            # Footer 요소 분류
+            footer_elements = self._get_footer_elements(page)
+            chapter_markers = [
+                elem
+                for elem in footer_elements
+                if self._classify_footer_element(elem) == "chapter_marker"
+            ]
 
-        # Footer 힌트로 추가 검증 (footer_info가 비어있으면 스킵)
-        chapter_hints = footer_info.get("chapter_hints", [])
-        if chapter_hints and best_score < 0.6:
-            # 챕터 힌트가 있으면 그 부근을 우선
-            first_chapter_page = min(chapter_hints)
-            if first_chapter_page >= 3:
-                logger.info(
-                    f"[INFO] Using footer hint: first chapter at page {first_chapter_page}"
-                )
-                best_page = first_chapter_page
+            # 챕터 표시가 있으면 본문 시작 후보
+            if chapter_markers:
+                # 서문 키워드 확인 (페이지 전체 텍스트에서)
+                if not self._has_start_keywords(page):
+                    logger.info(
+                        f"[INFO] Main starts at page {page_num} (챕터 표시 판별자 발견)"
+                    )
+                    return page_num
 
-        logger.info(
-            f"[INFO] Main starts at page {best_page} (score: {best_score:.2f})"
-        )
-        return best_page
+        # 기본값: 3페이지부터
+        logger.info("[INFO] Main starts at page 3 (기본값, 챕터 표시 판별자 없음)")
+        return 3
 
-    def _detect_notes_start(
-        self, pages: List[Dict], main_start: int, footer_info: Dict
+    def _detect_notes_start_improved(
+        self, pages: List[Dict], main_start: int
     ) -> Optional[int]:
         """
-        종문 시작 페이지 탐지 (3단계 계층적 필터링)
-
-        Phase 1: Footer 요소 우선 검사 (단어 경계 매칭)
-        Phase 2: 제목 형태 Element 검사 (짧은 텍스트 + 큰 폰트 + 상단)
-        Phase 3: 전체 텍스트 검사 (fallback, 단어 경계 매칭)
+        개선된 종문 시작 페이지 탐지
 
         Args:
+            pages: 페이지 리스트
             main_start: 본문 시작 페이지
-            footer_info: Footer 분석 정보
 
         Returns:
             종문 시작 페이지 번호 또는 None
         """
-        logger.info("[INFO] Detecting notes/post-body section start...")
-
-        # Footer 힌트 먼저 확인
-        post_body_start = footer_info.get("post_body_start")
-        if post_body_start and post_body_start > main_start:
-            logger.info(
-                f"[INFO] Using footer hint: post-body starts at page {post_body_start}"
-            )
-            return post_body_start
+        logger.info("[INFO] Detecting notes/post-body section start (개선 버전)...")
 
         # 본문 후반부만 검사 (전체의 50% 이후)
         search_start_idx = max(main_start, int(len(pages) * 0.5))
-        logger.info(
-            f"[INFO] Searching from page {pages[search_start_idx]['page_number']} (50% of total)"
-        )
 
-        # Phase 1: Footer 우선 검사
-        result = self._check_footer_elements(pages, search_start_idx)
-        if result:
-            return result
+        for page in pages[search_start_idx:]:
+            page_num = page.get("page_number", 0)
 
-        # Phase 2: 제목 형태 Element 검사
-        result = self._check_title_like_elements(pages, search_start_idx)
-        if result:
-            return result
+            # 홀수 페이지만 처리
+            if page_num % 2 == 0:
+                continue
 
-        # Phase 3: 전체 텍스트 검사 (fallback)
-        result = self._check_full_text(pages, search_start_idx)
-        if result:
-            return result
+            # Footer 요소에서 종문 키워드 확인
+            footer_elements = self._get_footer_elements(page)
+            
+            # Footer 요소 상세 로그 (159페이지 주변만)
+            if 157 <= page_num <= 161:
+                logger.info(f"[INFO] Page {page_num} 종문 탐지 검사:")
+                logger.info(f"  - Footer 요소 개수: {len(footer_elements)}")
+                for idx, elem in enumerate(footer_elements):
+                    text = elem.get("text", "").strip()
+                    bbox = elem.get("bbox", {})
+                    x0 = bbox.get("x0", 0.5)
+                    y0 = bbox.get("y0", 0.0)
+                    classification = self._classify_footer_element(elem)
+                    logger.info(
+                        f"  - 요소 #{idx+1}: text='{text[:80]}', "
+                        f"x0={x0:.3f}, y0={y0:.3f}, 분류={classification}"
+                    )
+            
+            footer_text = " ".join(
+                [
+                    elem.get("text", "").strip()
+                    for elem in footer_elements
+                    if elem.get("text", "").strip()
+                ]
+            )
+
+            # 종문 키워드 확인
+            matched_keywords = [
+                keyword
+                for keyword in END_KEYWORDS
+                if keyword.lower() in footer_text.lower()
+            ]
+
+            if matched_keywords:
+                logger.info(
+                    f"[INFO] Post-body starts at page {page_num} (종문 키워드 발견: {matched_keywords})"
+                )
+                logger.info(
+                    f"[INFO] Page {page_num} Footer 텍스트 전체: {footer_text}"
+                )
+                # 각 키워드가 어디서 매칭되었는지 상세 확인
+                for keyword in matched_keywords:
+                    keyword_lower = keyword.lower()
+                    footer_lower = footer_text.lower()
+                    if keyword_lower in footer_lower:
+                        start_idx = footer_lower.find(keyword_lower)
+                        context_start = max(0, start_idx - 20)
+                        context_end = min(len(footer_text), start_idx + len(keyword) + 20)
+                        context = footer_text[context_start:context_end]
+                        logger.info(
+                            f"  - 키워드 '{keyword}' 매칭 위치: "
+                            f"'{context}' (전체 텍스트의 {start_idx}번째 문자부터)"
+                        )
+                return page_num
 
         logger.info("[INFO] No post-body section detected")
         return None
 
-    def _check_footer_elements(
-        self, pages: List[Dict], start_idx: int
-    ) -> Optional[int]:
-        """Phase 1: Footer 요소만 검사 (단어 경계 매칭)"""
-        logger.info("[INFO] Phase 1: Checking footer elements...")
-
-        for page in pages[start_idx:]:
-            page_num = page["page_number"]
-            footer_elements = [
-                e for e in page.get("elements", []) if e.get("category") == "footer"
-            ]
-
-            for elem in footer_elements:
-                text = elem.get("text", "").strip()
-
-                for keyword in END_KEYWORDS:
-                    # 단어 경계 매칭 (\b = word boundary)
-                    pattern = r"\b" + re.escape(keyword) + r"\b"
-                    if re.search(pattern, text, re.IGNORECASE):
-                        logger.info(
-                            f"[INFO] Found in footer at page {page_num}: "
-                            f"keyword='{keyword}', text='{text[:50]}...'"
-                        )
-                        return page_num
-
-        return None
-
-    def _check_title_like_elements(
-        self, pages: List[Dict], start_idx: int
-    ) -> Optional[int]:
-        """Phase 2: 제목 형태 Element 검사 (짧은 텍스트 + 큰 폰트 + 상단)"""
-        logger.info("[INFO] Phase 2: Checking title-like elements...")
-
-        for page in pages[start_idx:]:
-            page_num = page["page_number"]
-            elements = page.get("elements", [])
-
-            if not elements:
-                continue
-
-            # 페이지 맨 위 요소들만 검사 (상위 20%)
-            top_elements = []
-            for elem in elements:
-                bbox = elem.get("bbox", {})
-                y0 = bbox.get("y0", 1.0)
-                if y0 < 0.2:  # 상단 20% 이내
-                    top_elements.append(elem)
-
-            for elem in top_elements:
-                text = elem.get("text", "").strip()
-                font_size = elem.get("font_size", 12)
-                text_length = len(text)
-
-                # 제목 조건: 짧고(≤50자) + 큰 폰트(≥14px)
-                if text_length <= 50 and font_size >= 14:
-                    for keyword in END_KEYWORDS:
-                        # 단어 경계 매칭
-                        pattern = r"\b" + re.escape(keyword) + r"\b"
-                        if re.search(pattern, text, re.IGNORECASE):
-                            logger.info(
-                                f"[INFO] Found title-like at page {page_num}: "
-                                f"keyword='{keyword}', text='{text}', "
-                                f"font_size={font_size}, length={text_length}"
-                            )
-                            return page_num
-
-        return None
-
-    def _check_full_text(self, pages: List[Dict], start_idx: int) -> Optional[int]:
-        """Phase 3: 전체 텍스트 검사 (fallback, 단어 경계 매칭)"""
-        logger.info("[INFO] Phase 3: Checking full text (fallback)...")
-
-        best_page = None
-        best_score = 0.0
-
-        for page in pages[start_idx:]:
-            page_num = page["page_number"]
-            page_text = " ".join(
-                [elem.get("text", "") for elem in page.get("elements", [])]
-            )
-
-            for keyword in END_KEYWORDS:
-                # 단어 경계 매칭
-                pattern = r"\b" + re.escape(keyword) + r"\b"
-                if re.search(pattern, page_text, re.IGNORECASE):
-                    # 키워드 중요도에 따라 점수 부여
-                    if keyword in [
-                        "맺음말",
-                        "에필로그",
-                        "epilogue",
-                        "각주",
-                        "미주",
-                        "endnote",
-                        "참고문헌",
-                        "references",
-                    ]:
-                        score = 1.0
-                    else:
-                        score = 0.7
-
-                    if score > best_score:
-                        best_score = score
-                        best_page = page_num
-                        logger.info(
-                            f"[INFO] Post-body candidate at page {best_page} "
-                            f"(keyword: '{keyword}', score: {score:.2f})"
-                        )
-                        break
-
-            # 점수가 높으면 바로 리턴
-            if best_score >= 1.0:
-                break
-
-        if best_page:
-            logger.info(
-                f"[INFO] Post-body starts at page {best_page} (full text match)"
-            )
-            return best_page
-
-        return None
-
-    def _calculate_main_start_score(self, page: Dict, footer_info: Dict) -> float:
+    def _classify_footer_element(self, elem: Dict) -> str:
         """
-        본문 시작 가능성 점수 계산
+        Footer 요소를 분류
 
-        점수 구성:
-        - 본문 패턴 매칭: 50% (0.5점)
-        - 긴 단락 존재: 30% (0.3점)
-        - Footer 힌트: 20% (0.2점)
-        - Pre Body 키워드 페널티: -0.4점
+        Returns:
+            "chapter_marker": 챕터 표시 판별자
+            "page_number": 페이지 번호
+            "other": 기타 (저자명, 출판사 등)
         """
+        text = elem.get("text", "").strip()
+        bbox = elem.get("bbox", {})
+        x0 = bbox.get("x0", 0.5)
+
+        # 1. 챕터 패턴 확인 (최우선)
+        if self._is_chapter_pattern(text):
+            return "chapter_marker"
+
+        # 2. 위치 기반 판단
+        if x0 < 0.05:  # 왼쪽 끝 (페이지 번호 영역)
+            if self._is_page_number(text):
+                return "page_number"
+
+        # 3. 중앙 영역 (챕터 제목 영역)
+        if 0.05 < x0 < 0.5:  # 중앙
+            if self._has_chapter_keywords(text):
+                return "chapter_marker"
+
+        # 4. 기타
+        return "other"
+
+    def _is_chapter_pattern(self, text: str) -> bool:
+        """
+        챕터 패턴 확인
+
+        패턴 예시:
+        - "제1장", "제1강", "제1부"
+        - "Chapter 1", "Part 1"
+        - "1장", "1강"
+        """
+        for pattern in self.chapter_patterns:
+            if pattern.search(text):
+                return True
+        return False
+
+    def _has_chapter_keywords(self, text: str) -> bool:
+        """
+        챕터 관련 키워드 확인
+
+        예: "제", "장", "강", "Chapter", "Part" 등
+        """
+        keywords = ["제", "장", "강", "부", "chapter", "part"]
+        text_lower = text.lower()
+        return any(keyword in text_lower for keyword in keywords)
+
+    def _is_page_number(self, text: str) -> bool:
+        """
+        페이지 번호인지 확인
+
+        기준:
+        - 숫자만 있음 (1-3자리)
+        - 챕터 패턴이 아님
+        - 특정 범위 내 (예: 1-1000)
+        """
+        # 숫자만 있는지 확인
+        if not re.match(r"^\d{1,3}$", text):
+            return False
+
+        number = int(text)
+
+        # 합리적인 페이지 번호 범위
+        if 1 <= number <= 1000:
+            return True
+
+        return False
+
+    def _has_start_keywords(self, page: Dict) -> bool:
+        """
+        페이지에 서문 키워드가 있는지 확인
+
+        Args:
+            page: 페이지 딕셔너리
+
+        Returns:
+            서문 키워드 존재 여부
+        """
+        # 페이지 전체 텍스트 확인
         elements = page.get("elements", [])
-        page_text = " ".join([elem.get("text", "") for elem in elements])
-        page_num = page.get("page_number", 0)
-
-        score = 0.0
-
-        # 1. 본문 시작 패턴 확인 (50%)
-        if any(pattern.search(page_text) for pattern in MAIN_START_PATTERNS):
-            score += 0.5
-
-        # 2. 긴 단락 확인 (30%)
-        has_long_paragraph = any(
-            len(elem.get("text", "")) >= MIN_PARAGRAPH_LENGTH
-            for elem in elements
-            if elem.get("category") == "paragraph"
+        page_text = " ".join(
+            [elem.get("text", "").strip() for elem in elements if elem.get("text", "")]
         )
-        if has_long_paragraph:
-            score += 0.3
 
-        # 3. Footer 힌트 (20%) - footer_info가 비어있으면 스킵
-        chapter_hints = footer_info.get("chapter_hints", [])
-        if page_num in chapter_hints:
-            score += 0.2
-
-        # 4. Pre Body 키워드 페널티
-        has_pre_body_keyword = any(
+        return any(
             keyword.lower() in page_text.lower() for keyword in START_KEYWORDS
         )
-        if has_pre_body_keyword:
-            score = max(0, score - 0.4)
 
-        return min(1.0, score)
+    def _get_footer_elements(self, page: Dict) -> List[Dict]:
+        """
+        페이지에서 Footer 영역 요소 추출
+
+        Footer 영역:
+        1. category='footer'인 요소
+        2. y0 좌표가 큰 요소 (페이지 하단, y0 > 0.9)
+
+        Args:
+            page: 페이지 딕셔너리
+
+        Returns:
+            Footer 요소 리스트
+        """
+        elements = page.get("elements", [])
+        footer_elements = []
+
+        for elem in elements:
+            # 1. category='footer'인 요소
+            if elem.get("category") == "footer":
+                footer_elements.append(elem)
+                continue
+
+            # 2. y0 좌표가 큰 요소 (페이지 하단)
+            bbox = elem.get("bbox", {})
+            y0 = bbox.get("y0", 0.0)
+            if y0 > 0.9:  # 페이지 하단 10% 영역 (강화: 0.8 → 0.9)
+                footer_elements.append(elem)
+
+        # y0 기준으로 정렬 (하단에 가까울수록 우선)
+        footer_elements.sort(
+            key=lambda e: e.get("bbox", {}).get("y0", 0.0), reverse=True
+        )
+
+        return footer_elements
 
     def _default_result(self) -> Dict[str, Any]:
         """기본 결과 (탐지 실패 시)"""

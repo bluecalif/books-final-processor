@@ -241,6 +241,9 @@ class PDFParser:
         # 페이지별로 좌/우 분리
         result_pages = []
         page_counter = 1
+        
+        # 페이지 번호 매핑 테이블 (원본 → 분리 후)
+        page_mapping = {}  # {original_page: [(new_page_num, side), ...]}
 
         for original_page in sorted(pages_dict.keys()):
             page_elements = pages_dict[original_page]
@@ -274,6 +277,20 @@ class PDFParser:
                 # raw_text 생성
                 raw_text_left = " ".join([e.get("text", "") for e in sorted_left])
                 
+                # 페이지 번호 매핑 기록
+                if original_page not in page_mapping:
+                    page_mapping[original_page] = []
+                page_mapping[original_page].append((page_counter, "left"))
+                
+                # 중요 페이지 범위 확인 (GT 기준: 165-169, 193-197, 222-226)
+                # 원본 페이지 번호로 환산: 분리 후 페이지 번호 / 2 (대략)
+                # 정확한 환산을 위해 원본 페이지 번호도 로깅
+                if 165 <= page_counter <= 169 or 193 <= page_counter <= 197 or 222 <= page_counter <= 226:
+                    logger.info(
+                        f"[INFO] 양면 분리 - 중요 페이지 범위: "
+                        f"원본 페이지 {original_page} → 분리 후 페이지 {page_counter} (좌측)"
+                    )
+                
                 result_pages.append(
                     {
                         "page_number": page_counter,
@@ -303,6 +320,18 @@ class PDFParser:
                 # raw_text 생성
                 raw_text_right = " ".join([e.get("text", "") for e in sorted_right])
                 
+                # 페이지 번호 매핑 기록
+                if original_page not in page_mapping:
+                    page_mapping[original_page] = []
+                page_mapping[original_page].append((page_counter, "right"))
+                
+                # 중요 페이지 범위 확인
+                if 165 <= page_counter <= 169 or 193 <= page_counter <= 197 or 222 <= page_counter <= 226:
+                    logger.info(
+                        f"[INFO] 양면 분리 - 중요 페이지 범위: "
+                        f"원본 페이지 {original_page} → 분리 후 페이지 {page_counter} (우측)"
+                    )
+                
                 result_pages.append(
                     {
                         "page_number": page_counter,
@@ -319,9 +348,27 @@ class PDFParser:
                 )
                 page_counter += 1
 
+        # 페이지 번호 매핑 요약 로그
         logger.info(
             f"[INFO] Page splitting completed: {len(pages_dict)} original pages → {len(result_pages)} split pages"
         )
+        
+        # 중요 페이지 범위의 원본 페이지 번호 환산 정보
+        logger.info("[INFO] 양면 분리 페이지 번호 매핑 요약:")
+        logger.info(f"  - 원본 페이지 수: {len(pages_dict)}")
+        logger.info(f"  - 분리 후 페이지 수: {len(result_pages)}")
+        logger.info(f"  - 분리 비율: {len(result_pages) / len(pages_dict):.2f}")
+        
+        # 중요 페이지 범위의 원본 페이지 번호 추정
+        # 분리 후 페이지 번호를 원본으로 환산: (page_num - 1) / 2 + 1 (대략)
+        important_ranges = [(165, 169), (193, 197), (222, 226)]
+        for start, end in important_ranges:
+            estimated_original_start = int((start - 1) / 2) + 1
+            estimated_original_end = int((end - 1) / 2) + 1
+            logger.info(
+                f"  - 중요 페이지 범위 {start}-{end} (분리 후) → "
+                f"원본 페이지 약 {estimated_original_start}-{estimated_original_end}"
+            )
         return result_pages
 
     def _clean_pages(self, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

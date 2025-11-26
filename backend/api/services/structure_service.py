@@ -5,7 +5,6 @@ from sqlalchemy.orm import Session
 from backend.api.models.book import Book, Chapter, BookStatus
 from backend.parsers.pdf_parser import PDFParser
 from backend.structure.structure_builder import StructureBuilder
-from backend.structure.llm_structure_refiner import LLMStructureRefiner
 from backend.api.schemas.structure import FinalStructureInput
 from backend.config.settings import settings
 
@@ -13,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class StructureService:
-    """구조 분석 서비스 클래스"""
+    """구조 분석 서비스 클래스 (Footer 기반, LLM 보정 제외)"""
 
     def __init__(self, db: Session):
         """
@@ -23,11 +22,10 @@ class StructureService:
         self.db = db
         self.pdf_parser = PDFParser(api_key=settings.upstage_api_key)
         self.structure_builder = StructureBuilder()
-        self.llm_refiner = LLMStructureRefiner(api_key=settings.openai_api_key)
 
     def get_structure_candidates(self, book_id: int) -> Dict[str, Any]:
         """
-        구조 후보 생성 (휴리스틱 + LLM 보정)
+        구조 후보 생성 (Footer 기반, LLM 보정 제외)
 
         Args:
             book_id: 책 ID
@@ -36,14 +34,13 @@ class StructureService:
             {
                 "meta": {...},
                 "auto_candidates": [
-                    {"label": "heuristic_v1", "structure": {...}},
-                    {"label": "llm_v2", "structure": {...}}
+                    {"label": "footer_based_v1", "structure": {...}}
                 ],
                 "chapter_title_candidates": [...],
                 "samples": {...}
             }
         """
-        logger.info(f"[INFO] Getting structure candidates for book {book_id}")
+        logger.info(f"[INFO] Getting structure candidates for book {book_id} (Footer 기반)")
 
         # 책 조회
         book = self.db.query(Book).filter(Book.id == book_id).first()
@@ -59,23 +56,19 @@ class StructureService:
         logger.info(f"[INFO] Parsing PDF: {book.source_file_path}")
         parsed_data = self.pdf_parser.parse_pdf(book.source_file_path, use_cache=True)
 
-        # 1. 휴리스틱 구조 생성
-        logger.info("[INFO] Building heuristic structure...")
-        heuristic_structure = self.structure_builder.build_structure(parsed_data)
+        # Footer 기반 구조 생성
+        logger.info("[INFO] Building Footer-based structure...")
+        footer_structure = self.structure_builder.build_structure(parsed_data)
 
-        # 2. LLM 보정 구조 생성
-        logger.info("[INFO] Refining structure with LLM...")
-        llm_structure = self.llm_refiner.refine_structure(parsed_data, heuristic_structure)
+        # 샘플 페이지 추출
+        samples = self._extract_samples(parsed_data, footer_structure)
 
-        # 3. 샘플 페이지 추출
-        samples = self._extract_samples(parsed_data, heuristic_structure)
-
-        # 4. 챕터 제목 후보 추출
+        # 챕터 제목 후보 추출
         chapter_title_candidates = self._extract_chapter_title_candidates(
-            parsed_data, heuristic_structure
+            parsed_data, footer_structure
         )
 
-        # 5. 메타데이터
+        # 메타데이터
         meta = {
             "total_pages": parsed_data.get("total_pages", 0),
             "book_id": book_id,
@@ -85,14 +78,13 @@ class StructureService:
         result = {
             "meta": meta,
             "auto_candidates": [
-                {"label": "heuristic_v1", "structure": heuristic_structure},
-                {"label": "llm_v2", "structure": llm_structure},
+                {"label": "footer_based_v1", "structure": footer_structure},
             ],
             "chapter_title_candidates": chapter_title_candidates,
             "samples": samples,
         }
 
-        logger.info("[INFO] Structure candidates generated successfully")
+        logger.info("[INFO] Structure candidates generated successfully (Footer 기반)")
         return result
 
     def apply_final_structure(
