@@ -19,8 +19,8 @@
 | Phase | 제목 | 진행률 | 상태 |
 |-------|------|-------|------|
 | Phase 1 | 프로젝트 기초 및 환경 설정 | 100% | 완료 |
-| Phase 2 | PDF 파싱 모듈 (Upstage API 연동) | 100% | **완료** (참고 파일 기반 재구현, E2E 테스트 통과) |
-| Phase 3 | 구조 분석 모듈 | 80% | **진행 중** (Footer 기반 구조 분석 완료, 추가 도서 재현성 확인 예정) |
+| Phase 2 | PDF 파싱 모듈 (Upstage API 연동) | 95% | **진행 중** (핵심 기능 완료, 성능 최적화 추가 작업 예정) |
+| Phase 3 | 구조 분석 모듈 | 90% | **진행 중** (Footer 기반 휴리스틱 구조 분석 완료, LLM 보정 제외, 추가 도서 재현성 확인 예정) |
 | Phase 4 | 요약 모듈 | 0% | 미시작 |
 | Phase 5 | 프론트엔드 (Next.js) | 0% | 미시작 |
 | Phase 6 | 통합 및 테스트 | 0% | 미시작 |
@@ -156,7 +156,11 @@ frontend/
 
 ### Phase 2: PDF 파싱 모듈 (Upstage API 연동)
 
-**✅ 현재 상태**: **완료** (참고 파일 기반 재구현 완료, E2E 테스트 통과, 캐싱 시스템 정상 작동)
+**✅ 현재 상태**: **진행 중** (핵심 기능 완료, 성능 최적화 추가 작업 예정)
+- ✅ 참고 파일 기반 재구현 완료 (2.1 ~ 2.5)
+- ✅ E2E 테스트 통과 (2.7)
+- ✅ 캐싱 시스템 정상 작동
+- ⚠️ **미완료**: 2.6 PDF 파싱 병렬처리 구현 (성능 최적화, 새로 추가된 항목)
 
 **목표**: Upstage API를 사용한 PDF 파싱 기능 구현
 
@@ -289,20 +293,59 @@ frontend/
 - [x] `backend/api/main.py`에 books 라우터 등록 ✅ 완료
 - [x] 백그라운드 작업 구현: `backend/api/services/parsing_service.py` 생성, `BackgroundTasks`로 자동 파싱 ✅ 완료
 
-#### 2.6 PDF 파싱 병렬처리 구현 (성능 최적화)
+#### 2.6 PDF 파싱 병렬처리 구현 (10페이지 기본 모드) ⚠️ 미완료 - **가장 중요**
+
+**⚠️ 핵심 변경**: 순차 처리를 완전히 제거하고 병렬 처리(10페이지 기본 모드)만 사용
+
 - [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
-- [ ] **병렬처리 구현** (10페이지 단위로 끊어서 파싱 후 병합):
-  - `backend/parsers/upstage_api_client.py`에 병렬 파싱 메서드 추가
-  - 10페이지 단위로 PDF 분할
-  - `asyncio` 또는 `concurrent.futures`를 사용한 병렬 파싱
-  - 각 청크 파싱 완료 후 Elements 병합 (페이지 번호 조정)
-  - 여러 도서의 파싱을 신속하게 처리하기 위한 성능 최적화
-  - 기존 100페이지 분할 로직과 병행하여 사용 가능하도록 설계
-- [ ] **성능 테스트**:
-  - 병렬처리 전후 파싱 시간 비교
+- [ ] **UpstageAPIClient 병렬 파싱 메서드 구현**:
+  - `backend/parsers/upstage_api_client.py` 수정
+  - `PARALLEL_CHUNK_SIZE = 10` 상수 추가 (기본 청크 크기)
+  - `MAX_WORKERS = 5` 상수 추가 (동시 요청 수 제한, Rate limit 고려)
+  - `parse_pdf()` 메서드 수정: 기본적으로 10페이지 병렬 처리 사용
+  - `_parse_pdf_parallel()` 메서드 추가:
+    - 10페이지 단위로 PDF 분할
+    - `concurrent.futures.ThreadPoolExecutor` 사용 (I/O 바운드 작업)
+    - 각 청크를 병렬로 파싱
+    - Elements 병합 시 페이지 번호 조정 (원본 페이지 번호 유지)
+    - 청크를 시작 페이지 기준으로 정렬 후 병합 (순서 보장)
+    - 에러 처리: 일부 청크 실패 시 재시도 로직
+  - 기존 `_parse_pdf_in_chunks()` 제거 (순차 처리 로직 제거)
+- [ ] **병렬 처리 로직 구현**:
+  - `_parse_chunk()`: 단일 청크 파싱 (ThreadPoolExecutor용)
+    - PDF 분할 → API 호출 → 결과 반환
+    - 임시 파일 즉시 삭제 (finally 블록)
+  - `_merge_chunk_results()`: 병렬 파싱 결과 병합
+    - 청크를 시작 페이지 기준으로 정렬
+    - 페이지 번호 조정 (각 청크의 시작 페이지 기준)
+    - ID 재조정 (순차적으로 할당, len(all_elements) 사용)
+    - Elements 순서 보장
+- [ ] **Rate Limit 및 에러 처리**:
+  - `max_workers=5`로 동시 요청 수 제한
+  - 429 에러 시 지수 백오프 재시도 (기존 로직 활용)
+  - 실패한 청크만 재시도, 부분 성공 허용 (로그 기록)
+- [ ] **성능 테스트 및 검증**:
+  - `backend/tests/test_parallel_parsing.py` 생성
+  - 병렬처리 전후 파싱 시간 비교 테스트
   - 여러 도서 동시 파싱 테스트
   - 메모리 사용량 모니터링
-- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 2] PDF 파싱 병렬처리 구현 완료"` → `git push origin main`
+  - E2E 테스트 통합: 기존 `test_e2e_pdf_parsing.py`에 병렬 처리 검증 추가
+  - **캐시 호환성 검증**: 병렬 처리 결과가 캐시에 저장되고 재사용되는지 확인
+- [ ] **기존 로직과의 호환성**:
+  - `parse_pdf()` 메서드 시그니처 유지 (하위 호환성)
+  - 캐싱 시스템과의 통합 확인 (병렬 처리 결과도 캐시 저장)
+  - `PDFParser.parse_pdf()`에서 변경 없이 사용 가능하도록
+  - API 응답 형식 유지 (동일한 `elements` 배열 구조)
+- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 2] PDF 파싱 병렬처리 구현 완료 (10페이지 기본 모드)"` → `git push origin main`
+
+**⚠️ 구현 시 필수 사항**:
+1. Elements 순서 보장: 청크를 페이지 순서대로 정렬 후 병합
+2. Page 번호 조정 정확성: 각 청크의 시작 페이지를 정확히 계산
+3. ID 재조정 일관성: 순차 처리와 동일한 방식 (len(all_elements) 사용)
+4. Rate Limit 고려: max_workers 제한, 429 에러 재시도
+5. 에러 처리: 실패한 청크만 재시도, 부분 성공 허용
+
+**⚠️ 예상 성능 향상**: 약 3-5배 (순차 처리 대비)
 
 #### 2.7 PDF 파싱 모듈 테스트
 - [x] **E2E 테스트 환경 설정**:
@@ -323,9 +366,9 @@ frontend/
   - **양면 분리 검증**: 원본 페이지 수 → 분리 후 페이지 수 확인 (10페이지 → 20페이지, 142페이지 → 284페이지) ✅ 완료
   - **변수명/함수명 Align 검증**: 현재 프로젝트 규칙 준수 확인 ✅ 완료
   - **로깅 형식 검증**: `[INFO]`, `[ERROR]` 형식 사용 확인 (이모지 없음) ✅ 완료
-  - 100페이지 초과 PDF: 분할 파싱 동작, 페이지 번호 조정, Elements 병합 검증 (추후 추가 가능)
-  - 에러 케이스: Upstage API 실패, 네트워크 에러, 파일 읽기 실패, 잘못된 파일 형식 (추후 추가 가능)
-  - `backend/tests/fixtures/` 디렉토리 생성 (테스트용 샘플 PDF, 선택)
+  - [ ] 100페이지 초과 PDF: 분할 파싱 동작, 페이지 번호 조정, Elements 병합 검증 (추후 추가 가능, 선택)
+  - [ ] 에러 케이스: Upstage API 실패, 네트워크 에러, 파일 읽기 실패, 잘못된 파일 형식 (추후 추가 가능, 선택)
+  - [ ] `backend/tests/fixtures/` 디렉토리 생성 (테스트용 샘플 PDF, 선택)
 - [x] **Git 커밋**: `git add .` → `git commit -m "[Phase 2] E2E 테스트 및 검증 완료"` → `git push origin main` ✅ 완료
 
 **⚠️ 검증 기준**:
@@ -334,17 +377,32 @@ frontend/
 - ✅ 캐시 재사용 검증 통과 (두 번째 파싱 시 캐시 히트 확인)
 - ✅ 변수명/함수명 Align 완료 (현재 프로젝트 규칙 준수)
 - ✅ 로깅 형식 준수 (`[INFO]`, `[ERROR]` 형식, 이모지 없음)
+- ⚠️ **미완료 항목**:
+  - [ ] 2.6 PDF 파싱 병렬처리 구현 (성능 최적화, 선택적)
+  - [ ] 2.7 일부 선택적 테스트 항목 (100페이지 초과 PDF, 에러 케이스, fixtures 디렉토리)
 
 **⚠️ 참고사항**: 
 - 참고 파일 방식으로 재구현하여 캐싱 문제를 근본적으로 해결
 - 참고 파일은 `docs/reference_code/parsers/`에 보관 (버전 관리 포함)
 - 각 단계 완료 후 검증하여 문제 조기 발견
 
+**⚠️ 완료된 핵심 기능**:
+- ✅ 참고 파일 기반 재구현 (2.1 ~ 2.5)
+- ✅ UpstageAPIClient: 100페이지 분할 파싱, 재시도 로직, Rate limit 처리
+- ✅ CacheManager: 파일 해시 기반 캐싱, 안전한 저장
+- ✅ PDFParser: 캐싱 통합, 양면 분리, Elements 구조화
+- ✅ 업로드 API: 파일 업로드, 백그라운드 파싱, DB 저장
+- ✅ E2E 테스트: 실제 서버 실행, 캐시 저장/재사용 검증
+
+**⚠️ 미완료 항목 (추가 개선)**:
+- [ ] 2.6 PDF 파싱 병렬처리 구현 (성능 최적화, 10페이지 단위 병렬 파싱)
+- [ ] 2.7 일부 선택적 테스트 항목 (100페이지 초과 PDF, 에러 케이스, fixtures 디렉토리)
+
 **⚠️ Git 커밋 전략**:
-- 각 단계(2.1, 2.2, 2.3, 2.4) 완료 후 즉시 커밋
+- 각 단계(2.1, 2.2, 2.3, 2.4, 2.5, 2.7) 완료 후 즉시 커밋
 - 작은 단위로 커밋하여 문제 발생 시 원복 가능하도록
 - 커밋 메시지 형식: `[Phase 2] 작업 단계: 상세 설명`
-- Phase 2 전체 완료 후 최종 커밋: `git commit -m "[Phase 2] PDF 파싱 모듈 재구현 완료 (참고 파일 기반, 캐싱 통합)"`
+- 핵심 기능 완료: `git commit -m "[Phase 2] PDF 파싱 모듈 재구현 완료 (참고 파일 기반, 캐싱 통합)"`
 
 ---
 
@@ -352,120 +410,106 @@ frontend/
 
 **✅ 현재 상태**: **진행 중** - Footer 기반 구조 분석 구현 완료, E2E 테스트 통과 (1등의 통찰.pdf 기준)
 
-**⚠️ 작업 방식**: **참고 파일 기반 구현** (Phase 2와 동일)
-- 기존 프로젝트의 구조 분석 관련 파일을 `_REF` 접미사를 붙여 참고 파일로 추가
-- 참고 파일을 기반으로 현재 프로젝트 구조에 맞게 재구현
-- 변수명/함수명/클래스명을 현재 프로젝트 규칙에 맞게 Align
-- Phase 2에서 구현한 캐싱 시스템 활용 (`pdf_parser.parse_pdf(use_cache=True)`로 캐시된 파싱 결과 재사용)
-- 참고 파일 위치: `docs/reference_code/structure/` (예정)
+**⚠️ 핵심 원칙** (참고: `docs/structure_analysis_logic_explanation_v2.md`):
+1. **Footer 기반 판단**: 모든 구조 판단은 Footer의 구조 판별자를 기준으로 수행
+2. **좌측 페이지 우선**: 홀수 페이지(좌측)에 항상 구조 판별자가 나타나므로 이를 기준으로 판단
+3. **숫자 기반 챕터 구분**: "제", "장", "강", "part" 등의 특별한 식별자에 구애받지 않고, 숫자를 바탕으로 챕터 구분
+4. **LLM 보정 제외**: 휴리스틱 기반 구조 분석만 사용 (LLM 보정 로직 미적용)
 
-**목표**: 책의 구조(본문 시작, 챕터 경계)를 자동으로 파악하는 모듈 구현
+**목표**: Footer 기반 휴리스틱으로 책의 구조(본문 시작, 챕터 경계)를 자동으로 파악하는 모듈 구현
 
 **⚠️ Git 주의사항**: 작업 전 `git status`, `git pull origin main` 확인 / 작업 후 `git add .`, `git commit`, `git push origin main` 실행
 
 #### 3.1 참고 파일 추가 및 분석
-- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
-- [ ] `docs/reference_code/structure/` 디렉토리 생성
-- [ ] 선행 서비스의 구조 분석 관련 파일 확인 및 목록 작성
-- [ ] 참고 파일 추가 (`_REF` 접미사 사용):
-  - `content_boundary_detector_REF.py`
-  - `chapter_detector_REF.py`
-  - `structure_builder_REF.py`
-  - `llm_structure_refiner_REF.py` (있는 경우)
-- [ ] 참고 파일 상단에 주석 추가 (출처, 참고 목적, 주요 차이점)
-- [ ] 기능 분석 및 현재 프로젝트 구조 매핑 (`ALIGN_PLAN.md` 작성)
-- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] 참고 파일 추가 및 분석 완료"` → `git push origin main`
+- [x] **Git 작업 전**: `git status` → `git pull origin main` 확인 ✅ 완료
+- [x] `docs/reference_code/structure/` 디렉토리 생성 ✅ 완료
+- [x] 선행 서비스의 구조 분석 관련 파일 확인 및 목록 작성 ✅ 완료
+- [x] 참고 파일 추가 (`_REF` 접미사 사용): ✅ 완료
+  - `content_boundary_detector_REF.py` ✅ 완료
+  - `chapter_detector_REF.py` ✅ 완료
+  - `structure_builder_REF.py` ✅ 완료
+  - `llm_structure_refiner_REF.py` (있는 경우) ✅ 완료
+- [x] 참고 파일 상단에 주석 추가 (출처, 참고 목적, 주요 차이점) ✅ 완료
+- [x] 기능 분석 및 현재 프로젝트 구조 매핑 (`ALIGN_PLAN.md` 작성) ✅ 완료
+- [x] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] 참고 파일 추가 및 분석 완료"` → `git push origin main` ✅ 완료
 
-#### 3.2 ContentBoundaryDetector 및 ChapterDetector 구현 (휴리스틱 기반)
-- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
-- [ ] `backend/structure/content_boundary_detector.py` 생성
-  - `ContentBoundaryDetector` 클래스
-  - `detect_boundaries()`: 키워드 기반 경계 탐지
-    - START_KEYWORDS: ["차례", "contents", "목차", "서문"]
-    - END_KEYWORDS: ["참고문헌", "references", "부록", "index"]
-    - 앞쪽 20페이지에서 시작 키워드 검색
-    - 뒤쪽 30페이지에서 끝 키워드 검색
-    - 반환: `{"start": {...}, "main": {...}, "end": {...}}`
-- [ ] `backend/structure/chapter_detector.py` 생성
-  - `ChapterDetector` 클래스
-  - `detect_chapters()`: 챕터 탐지
-    - 페이지 상단 요소 분석 (y0 작음, font_size 큼)
-    - CHAPTER_PATTERNS 정규식 매칭: `r"^제\s*\d+\s*장"`, `r"^CHAPTER\s+\d+"`, `r"^\d+\.\s*[^.]+\s*$"`
-    - 챕터 시작/끝 페이지 계산
-    - 반환: 챕터 리스트
-- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] ContentBoundaryDetector 및 ChapterDetector 구현 완료"` → `git push origin main`
+#### 3.2 ContentBoundaryDetector 및 ChapterDetector 구현 (Footer 기반 휴리스틱)
+- [x] **Git 작업 전**: `git status` → `git pull origin main` 확인 ✅ 완료
+- [x] `backend/structure/content_boundary_detector.py` 생성 ✅ 완료
+  - `ContentBoundaryDetector` 클래스 ✅ 완료
+  - `detect_boundaries()`: Footer 기반 경계 탐지 ✅ 완료
+    - **Footer 구조 판별자 추출**: 홀수 페이지(좌측) Footer에서 구조 판별자 추출 ✅ 완료
+    - **서문/본문/종문 구분**: Footer 구조 판별자의 숫자 포함 여부와 키워드로 구분 ✅ 완료
+      - 숫자 포함 + 서문 키워드 없음 → 본문 영역 ✅ 완료
+      - 숫자 미포함 + 서문 키워드 포함 → 서문 영역 ✅ 완료
+      - 숫자 미포함 + 종문 키워드 포함 → 종문 영역 ✅ 완료
+    - START_KEYWORDS: 서문 키워드 목록 (한글/영어) ✅ 완료
+    - END_KEYWORDS: 종문 키워드 목록 (한글/영어) ✅ 완료
+    - 반환: `{"start": {...}, "main": {...}, "end": {...}}` ✅ 완료
+- [x] `backend/structure/chapter_detector.py` 생성 ✅ 완료
+  - `ChapterDetector` 클래스 ✅ 완료
+  - `detect_chapters()`: Footer 기반 챕터 탐지 ✅ 완료
+    - **Footer 구조 판별자에서 숫자 추출**: 본문 영역의 홀수 페이지 Footer에서 숫자 추출 ✅ 완료
+    - **숫자 기반 챕터 구분**: "제", "장", "강" 등 특별한 식별자 무시, 숫자만 사용 ✅ 완료
+    - **챕터 범위 계산**: 각 챕터의 시작/끝 페이지 계산 (홀수 페이지 기준) ✅ 완료
+    - **짝수 페이지 처리**: 인접한 홀수 페이지와 동일한 챕터로 간주 ✅ 완료
+    - 반환: 챕터 리스트 ✅ 완료
+- [x] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] ContentBoundaryDetector 및 ChapterDetector 구현 완료 (Footer 기반)"` → `git push origin main` ✅ 완료
 
-#### 3.3 StructureBuilder 구현 (휴리스틱 통합)
-- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
-- [ ] `backend/structure/structure_builder.py` 생성
-  - `StructureBuilder` 클래스
-  - `build_structure(parsed_data)`: 최종 구조 생성
-    - 경계 탐지 → 챕터 탐지 → 최종 구조 JSON 생성
-    - 반환: `{"start": {...}, "main": {...}, "end": {...}, "metadata": {...}}`
-  - 참고: `docs/book-assistant_repomix_backend.md` (Line 5448-5538)
-- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] StructureBuilder 구현 완료"` → `git push origin main`
+#### 3.3 StructureBuilder 구현 (Footer 기반 휴리스틱 통합)
+- [x] **Git 작업 전**: `git status` → `git pull origin main` 확인 ✅ 완료
+- [x] `backend/structure/structure_builder.py` 생성 ✅ 완료
+  - `StructureBuilder` 클래스 ✅ 완료
+  - `build_structure(parsed_data)`: Footer 기반 최종 구조 생성 ✅ 완료
+    - ContentBoundaryDetector로 Footer 기반 경계 탐지 ✅ 완료
+    - ChapterDetector로 Footer 기반 챕터 탐지 ✅ 완료
+    - 최종 구조 JSON 생성 ✅ 완료
+    - 반환: `{"start": {...}, "main": {...}, "end": {...}, "metadata": {...}}` ✅ 완료
+  - 참고: `docs/structure_analysis_logic_explanation_v2.md` ✅ 완료
+- [x] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] StructureBuilder 구현 완료 (Footer 기반)"` → `git push origin main` ✅ 완료
 
-#### 3.4 LLMStructureRefiner 구현 (core_logics.md)
-- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
-- [ ] `backend/structure/llm_structure_refiner.py` 생성
-  - `LLMStructureRefiner` 클래스
-  - Pydantic 모델: `LLMChapterSuggestion`, `LLMStructureSuggestion`
-  - `_build_page_toplines_chain()`: 각 페이지 상단 50글자 추출
-    - 형식: "p{page_number}: {text}"
-    - y0가 가장 작은 요소 선택 (페이지 상단)
-    - 참고: `docs/core_logics.md` Line 244-268
-  - `_build_context_for_llm()`: LLM 컨텍스트 구축
-    - 글로벌 정보 (total_pages, original_pages 등)
-    - 샘플 페이지 (head, tail, around_main_start)
-    - 챕터 후보
-    - page_toplines_chain
-    - 참고: `docs/core_logics.md` Line 280-328
-  - `_build_prompt()`: 시스템 프롬프트 생성
-    - JSON 스키마 명시
-    - page_toplines_chain 사용법 지시
-    - 참고: `docs/core_logics.md` Line 344-417
-  - `refine_structure()`: LLM 호출 및 응답 파싱
-    - OpenAI API 호출 (gpt-4o-mini, temperature=0.3, response_format="json_object")
-    - Pydantic 검증
-    - 실패 시 휴리스틱 구조로 fallback
-- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] LLMStructureRefiner 구현 완료"` → `git push origin main`
+#### 3.4 LLMStructureRefiner 구현 (참고용, 실제 미사용)
+- [x] `backend/structure/llm_structure_refiner.py` 생성 ✅ 완료 (참고용으로 구현됨)
+- [ ] **⚠️ 중요: LLM 보정 로직 미적용**
+  - Footer 기반 휴리스틱 구조 분석만 사용 ✅ 완료
+  - `LLMStructureRefiner.refine_structure()` 호출 제거 ✅ 완료
+  - `StructureService.get_structure_candidates()`에서 LLM 보정 로직 제거 ✅ 완료
+  - API 응답에서 LLM 보정 구조 제외 (Footer 기반 휴리스틱 구조만 반환) ✅ 완료
 
-#### 3.5 구조 분석 API 스키마 및 서비스 구현
-- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
-- [ ] `backend/api/schemas/structure.py` 생성
-  - `LLMChapterSuggestion`: `number`, `title`, `start_page`, `end_page`
-  - `LLMStructureSuggestion`: `main_start_page`, `main_end_page`, `chapters`, `notes_pages`, `issues`
-  - `FinalChapterInput`: `title`, `start_page`, `end_page`, `order_index` (선택)
-  - `FinalStructureInput`: `main_start_page`, `main_end_page`, `chapters`, `notes_pages`, `start_pages`, `end_pages`
-  - `StructureCandidatesResponse`: `meta`, `auto_candidates`, `chapter_title_candidates`, `samples`
-- [ ] `backend/api/services/structure_service.py` 생성
-  - `StructureService` 클래스
-  - `get_structure_candidates(book_id)`: 휴리스틱 + LLM 보정 구조 생성
-    - **PDF 파싱 데이터 가져오기 (캐시 사용)**: `pdf_parser.parse_pdf(use_cache=True)` - 캐시된 파싱 결과 재사용
-    - StructureBuilder로 휴리스틱 구조 생성
-    - LLMStructureRefiner로 LLM 보정 구조 생성
-    - 샘플 페이지, 챕터 제목 후보 추출
-    - 반환: `StructureCandidatesResponse`
-  - `apply_final_structure(book_id, final_structure)`: 최종 구조 DB 저장
-    - `Book.structure_data`에 JSON 저장
-    - 기존 Chapter 레코드 삭제 후 재생성
-    - 상태 변경: `parsed` → `structured`
-    - 참고: `docs/core_logics.md` Line 501-711
-- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] 구조 분석 API 스키마 및 서비스 구현 완료"` → `git push origin main`
+#### 3.5 구조 분석 API 스키마 및 서비스 구현 (Footer 기반)
+- [x] **Git 작업 전**: `git status` → `git pull origin main` 확인 ✅ 완료
+- [x] `backend/api/schemas/structure.py` 생성 ✅ 완료
+  - `LLMChapterSuggestion`, `LLMStructureSuggestion`: 참고용 스키마 (실제 미사용) ✅ 완료
+  - `FinalChapterInput`: `title`, `start_page`, `end_page`, `order_index` (선택) ✅ 완료
+  - `FinalStructureInput`: `main_start_page`, `main_end_page`, `chapters`, `notes_pages`, `start_pages`, `end_pages` ✅ 완료
+  - `StructureCandidatesResponse`: `meta`, `auto_candidates`, `chapter_title_candidates`, `samples` ✅ 완료
+- [x] `backend/api/services/structure_service.py` 생성 ✅ 완료
+  - `StructureService` 클래스 ✅ 완료
+  - `get_structure_candidates(book_id)`: Footer 기반 휴리스틱 구조 생성 ✅ 완료
+    - **PDF 파싱 데이터 가져오기 (캐시 사용)**: `pdf_parser.parse_pdf(use_cache=True)` - 캐시된 파싱 결과 재사용 ✅ 완료
+    - StructureBuilder로 Footer 기반 휴리스틱 구조 생성 ✅ 완료
+    - **LLM 보정 로직 제거**: `LLMStructureRefiner.refine_structure()` 호출 제거 ✅ 완료
+    - 샘플 페이지, 챕터 제목 후보 추출 ✅ 완료
+    - 반환: `StructureCandidatesResponse` (Footer 기반 휴리스틱 구조만 포함, `label: "footer_based_v1"`) ✅ 완료
+  - `apply_final_structure(book_id, final_structure)`: 최종 구조 DB 저장 ✅ 완료
+    - `Book.structure_data`에 JSON 저장 ✅ 완료
+    - 기존 Chapter 레코드 삭제 후 재생성 ✅ 완료
+    - 상태 변경: `parsed` → `structured` ✅ 완료
+- [x] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] 구조 분석 API 스키마 및 서비스 구현 완료 (Footer 기반)"` → `git push origin main` ✅ 완료
 
-#### 3.6 구조 분석 API 라우터 구현
-- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
-- [ ] `backend/api/routers/structure.py` 생성
-  - `GET /api/books/{id}/structure/candidates`: 구조 후보 반환
-    - 휴리스틱 구조 + LLM 보정 구조
-    - 샘플 페이지, 챕터 제목 후보 포함
-    - 참고: `docs/core_logics.md` Line 447-498
-  - `POST /api/books/{id}/structure/final`: 최종 구조 확정
-    - `FinalStructureInput` 받아서 DB 저장
-    - Chapter 테이블 재생성
-    - 상태 변경: `parsed` → `structured`
-- [ ] `backend/api/main.py`에 structure 라우터 등록
-- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] 구조 분석 API 라우터 구현 완료"` → `git push origin main`
+#### 3.6 구조 분석 API 라우터 구현 (Footer 기반)
+- [x] **Git 작업 전**: `git status` → `git pull origin main` 확인 ✅ 완료
+- [x] `backend/api/routers/structure.py` 생성 ✅ 완료
+  - `GET /api/books/{id}/structure/candidates`: Footer 기반 구조 후보 반환 ✅ 완료
+    - Footer 기반 휴리스틱 구조만 반환 (`label: "footer_based_v1"`) ✅ 완료
+    - LLM 보정 구조 제외 ✅ 완료
+    - 샘플 페이지, 챕터 제목 후보 포함 ✅ 완료
+  - `POST /api/books/{id}/structure/final`: 최종 구조 확정 ✅ 완료
+    - `FinalStructureInput` 받아서 DB 저장 ✅ 완료
+    - Chapter 테이블 재생성 ✅ 완료
+    - 상태 변경: `parsed` → `structured` ✅ 완료
+- [x] `backend/api/main.py`에 structure 라우터 등록 ✅ 완료
+- [x] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] 구조 분석 API 라우터 구현 완료 (Footer 기반)"` → `git push origin main` ✅ 완료
 
 #### 3.7 구조 분석 모듈 E2E 테스트
 - [x] **Git 작업 전**: `git status` → `git pull origin main` 확인 ✅ 완료
@@ -487,37 +531,64 @@ frontend/
     - ⚠️ 중요: 페이지 번호만 비교 (챕터 제목은 비교하지 않음) ✅ 완료
   - 구조 분석 API 검증: ✅ 완료
     - `GET /api/books/{id}/structure/candidates` (Footer 기반 구조, 샘플 페이지) ✅ 완료
-    - `POST /api/books/{id}/structure/final` (DB 저장, Chapter 재생성, 상태 변경) - 추후 구현 예정
+    - `POST /api/books/{id}/structure/final` (DB 저장, Chapter 재생성, 상태 변경) ✅ 완료
   - **Phase 2 E2E 테스트와 연결성**: ✅ 완료
     - Phase 2에서 파싱된 book_id 재사용 또는 동일 PDF 파일 사용 ✅ 완료
     - Phase 2에서 생성된 캐시 파일(`data/cache/upstage/{hash}.json`) 재사용 확인 ✅ 완료
-- [ ] **추가 도서로 재현성 확인** (예정):
-  - 추가 도서 PDF 파일 준비 (사용자 제공 예정)
-  - Ground Truth 생성 (사용자 제시 예정)
-  - E2E 테스트 실행 및 정확도 평가
-  - 다양한 PDF 형식: 한국어/영어 책, 다양한 챕터 구조
-  - 재현성 검증: Footer 기반 구조 분석이 다양한 도서에서도 정확하게 작동하는지 확인
-- [ ] **평가-수정 사이클**:
-  - 문제 발견 시 사용자 보고 및 수정
-  - 재테스트 및 정확도 재평가
-  - 모든 메트릭 통과 확인
+- [ ] **추가 도서로 재현성 확인** (총 9개 도서) - **가장 중요**:
+  - **Ground Truth 파일 생성** (사용자 제공 시작 페이지만, end_page는 계산):
+    1. `ground_truth_3D프린터의모든것.py`: 1장(27), 2장(99), 3장(151), 4장(241), 종문(359)
+    2. `ground_truth_90년대생이온다.py`: 1장(35), 2장(167), 3장(289), 종문(401)
+    3. `ground_truth_10년후세계사.py`: 1장(25), 2장(175), 3장(385), 종문(548)
+    4. `ground_truth_4차산업혁명전문직의미래.py`: 1장(45), 2장(291), 3장(449), 종문(588)
+    5. `ground_truth_12가지인생의법칙.py`: 1장(35), 2장(170), 3장(299), 4장(188), 5장(243), 6장(602), 7장(330), 8장(408), 9장(463), 10장(504), 11장(555), 12장(641), 종문(680)
+    6. `ground_truth_30개도시로읽는세계사.py`: 1장(23), 11장(211), 21장(383), 30장(555), 종문(571)
+    7. `ground_truth_10년후이곳은제2의판교.py`: 1장(17), 2장(85), 3장(123), 4장(163), 5장(345), 종문(518)
+    8. `ground_truth_10년후이곳은제2의강남.py`: 1장(19), 2장(105), 3장(145), 4장(279), 종문(408)
+    9. `ground_truth_99를위한경제.py`: 1장(41), 2장(69), 3장(125), 4장(145), 5장(177), 6장(257), 7장(321), 종문(349)
+  - **⚠️ 중요**: 제공된 값은 각 챕터의 시작 페이지만 제공됨
+    - `end_page` 계산: 다음 챕터 시작 페이지 - 1
+    - 마지막 챕터의 `end_page`: 종문 시작 페이지 - 1
+    - `main_start_page`: 첫 번째 챕터 시작 페이지
+    - `main_end_page`: 종문 시작 페이지 - 1
+  - **E2E 테스트 확장**:
+    - `backend/tests/test_e2e_structure_analysis.py` 수정
+    - 각 추가 도서별 테스트 케이스 추가 (총 9개 도서)
+    - 정확도 평가 메트릭:
+      - 본문 시작 페이지: ±3페이지
+      - 챕터 개수: ±2개
+      - 챕터 시작 페이지: 각 챕터별 ±3페이지
+      - 종문 탐지: 종문 시작 페이지 ±3페이지
+    - 테스트 결과 리포트 생성 (각 도서별 정확도, 통과/실패 여부, 전체 통계)
+  - **평가-수정 사이클**:
+    - 문제 발견 시 사용자 보고 및 수정
+    - 재테스트 및 정확도 재평가
+    - 모든 메트릭 통과 확인 (9개 도서 모두)
+    - 최종 리포트 생성 (전체 도서 정확도 통계, 평균 정확도, 실패한 도서 목록)
 
 **⚠️ 검증 기준**:
 - ✅ E2E 테스트 통과 (실제 서버 실행, 실제 데이터 사용) - 1등의 통찰.pdf 기준
 - ✅ 캐시 재사용 검증 통과 (구조 분석 시 캐시된 파싱 결과 사용 확인, Upstage API 호출 없음)
-- ✅ Footer 기반 구조 생성 검증 통과
+- ✅ Footer 기반 휴리스틱 구조 생성 검증 통과
+- ✅ LLM 보정 로직 제외 확인 (Footer 기반 휴리스틱만 사용)
 - ✅ 정확도 평가 통과 (Ground Truth 기반, 페이지 번호만 비교) - 1등의 통찰.pdf 기준
-  - 본문 시작 페이지: Footer 기반(±3페이지) ✅ 통과
-  - 챕터 개수: Footer 기반(±2개) ✅ 통과
-  - 챕터 시작 페이지: 각 챕터별 Footer 기반(±3페이지) ✅ 통과
-  - 종문 탐지: ✅ 완료
+  - 본문 시작 페이지: Footer 기반(±3페이지) ✅ 통과 (예측 37, GT 36, 오차 1페이지)
+  - 챕터 개수: Footer 기반(±2개) ✅ 통과 (예측 7개, GT 7개, 오차 0개)
+  - 챕터 시작 페이지: 각 챕터별 Footer 기반(±3페이지) ✅ 통과 (7/7개 챕터 통과)
+  - 종문 탐지: ✅ 완료 (247페이지에서 "감사" 키워드 탐지)
 - ✅ Phase 2 E2E 테스트와 연결성 확인 (캐시 재사용)
 - ✅ 변수명/함수명 Align 완료
 - ✅ 로깅 형식 준수 (`[INFO]`, `[ERROR]`, 이모지 없음)
-- [ ] **추가 도서로 재현성 확인** (예정): 다양한 도서에서 Footer 기반 구조 분석 정확도 검증
+- [ ] **추가 도서로 재현성 확인** (총 9개 도서): 다양한 도서에서 Footer 기반 구조 분석 정확도 검증
+
+**⚠️ 핵심 구현 내용** (참고: `docs/structure_analysis_logic_explanation_v2.md`):
+- Footer 기반 본문 탐지: Footer 구조 판별자의 숫자 포함 여부와 서문/종문 키워드로 서문/본문/종문 구분
+- Footer 기반 챕터 탐지: Footer 구조 판별자에 나타나는 숫자를 기준으로 챕터 구분 (특별한 식별자 무시)
+- 좌측 페이지 우선: 홀수 페이지(좌측)의 Footer를 기준으로 판단하고, 짝수 페이지(우측)는 인접한 홀수 페이지와 동일하게 처리
+- LLM 보정 제외: 휴리스틱 기반 구조 분석만 사용 (LLM 보정 로직 미적용)
 
 **⚠️ Git 커밋 전략**:
-- 각 단계(3.1, 3.2, 3.3, 3.4, 3.5, 3.6) 완료 후 즉시 커밋
+- 각 단계(3.1, 3.2, 3.3, 3.5, 3.6) 완료 후 즉시 커밋
 - 작은 단위로 커밋하여 문제 발생 시 원복 가능하도록
 - 커밋 메시지 형식: `[Phase 3] 작업 단계: 상세 설명`
 
