@@ -19,17 +19,19 @@ logger = logging.getLogger(__name__)
 class PDFParser:
     """PDF 파서 클래스"""
 
-    def __init__(self, api_key: Optional[str] = None, clean_output: bool = True):
+    def __init__(self, api_key: Optional[str] = None, clean_output: bool = True, use_cache: bool = True):
         """
         Args:
             api_key: Upstage API 키 (None이면 settings에서 가져옴)
             clean_output: 출력 시 불필요한 필드 제거 (기본값: True)
+            use_cache: 캐시 사용 여부 (기본값: True)
         """
         if api_key is None:
             api_key = settings.upstage_api_key
-        self.api_client = UpstageAPIClient(api_key)
+        self.api_client = UpstageAPIClient(api_key, use_cache=use_cache)
         self.cache_manager = CacheManager()  # 캐시 매니저 초기화
         self.clean_output = clean_output
+        self.use_cache = use_cache
 
     def parse_pdf(
         self, file_path: str, use_cache: bool = True, force_split: bool = True

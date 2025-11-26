@@ -5,13 +5,14 @@ Python requests를 사용하여 Upstage Document Parse API를 직접 호출합�
 10페이지 초과 시 자동으로 병렬 분할 파싱합니다.
 """
 import requests
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from pathlib import Path
 import logging
 import time
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pypdf import PdfReader, PdfWriter
+from backend.parsers.cache_manager import CacheManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +24,16 @@ class UpstageAPIClient:
     PARALLEL_CHUNK_SIZE = 10  # 병렬 처리 기본 청크 크기
     MAX_WORKERS = 5  # 동시 요청 수 제한 (Rate limit 고려)
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, use_cache: bool = True):
         """
         Args:
             api_key: Upstage API 키
+            use_cache: 캐시 사용 여부 (기본값: True)
         """
         self.api_key = api_key
         self.url = "https://api.upstage.ai/v1/document-digitization"
+        self.use_cache = use_cache
+        self.cache_manager = CacheManager() if use_cache else None
 
     def parse_pdf(self, pdf_path: str, retries: int = 3) -> Dict[str, Any]:
         """
@@ -54,6 +58,16 @@ class UpstageAPIClient:
                 }
             }
         """
+        # 1. 캐시 확인 (전체 파일에 대한 캐시)
+        if self.use_cache and self.cache_manager:
+            cached_result = self.cache_manager.get_cached_result(pdf_path)
+            if cached_result:
+                logger.info(f"[INFO] Cache hit for {pdf_path}, using cached result")
+                return cached_result
+        
+        # 2. 캐시 미스: API 호출 필요
+        logger.info(f"[INFO] Cache miss for {pdf_path}, calling Upstage API")
+        
         # PDF 페이지 수 확인
         total_pages = self._get_pdf_page_count(pdf_path)
         logger.info(f"[INFO] PDF has {total_pages} pages")
@@ -68,14 +82,20 @@ class UpstageAPIClient:
                 "pages_per_chunk": total_pages,
                 "parallel_processing": False,
             }
-            return result
         else:
             # 10페이지 초과: 병렬 분할 파싱
             logger.info(
                 f"[INFO] Parallel parsing required ({total_pages} pages, "
                 f"{self.PARALLEL_CHUNK_SIZE} pages per chunk)"
             )
-            return self._parse_pdf_parallel(pdf_path, total_pages, retries)
+            result = self._parse_pdf_parallel(pdf_path, total_pages, retries)
+        
+        # 3. 캐시 저장 (API 호출 결과)
+        if self.use_cache and self.cache_manager:
+            self.cache_manager.save_cache(pdf_path, result)
+            logger.info(f"[INFO] Cached API response for {pdf_path}")
+        
+        return result
 
     def _get_pdf_page_count(self, pdf_path: str) -> int:
         """PDF 페이지 수 확인"""
