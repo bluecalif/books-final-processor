@@ -41,7 +41,7 @@ class LLMStructureRefiner:
         if api_key is None:
             api_key = settings.openai_api_key
         self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-4o-mini"
+        self.model = "gpt-4.1-mini"
         self.temperature = 0.3
 
     def refine_structure(
