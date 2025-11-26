@@ -144,6 +144,12 @@ def test_e2e_pdf_parsing_full_flow(e2e_client: httpx.Client):
         cached_data = json.load(f)
     
     assert "elements" in cached_data or "api" in cached_data, "캐시 파일에 필수 필드가 없음"
+    
+    # 병렬 처리 메타데이터 검증 (10페이지 초과인 경우)
+    if cached_data.get("metadata", {}).get("parallel_processing"):
+        assert cached_data["metadata"]["pages_per_chunk"] == 10, "병렬 처리 청크 크기가 10이 아님"
+        logger.info(f"[TEST] 병렬 처리 확인: {cached_data['metadata'].get('total_chunks', 0)}개 청크")
+    
     logger.info(f"[TEST] 캐시 저장 검증 완료: {cache_file} ({cache_file.stat().st_size} bytes)")
     
     # 8. 양면 분리 검증 (페이지 수 확인)
