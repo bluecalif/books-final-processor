@@ -454,24 +454,45 @@ frontend/
 
 #### 3.7 구조 분석 모듈 E2E 테스트
 - [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
+- [ ] **Ground Truth 파일 생성**:
+  - `backend/tests/fixtures/ground_truth_1등의통찰.py` 생성 (사용자 제공 페이지 정보 기반)
+  - ⚠️ 중요: 정확도 평가는 페이지 번호만 사용 (main_start_page, main_end_page, chapter start_page/end_page)
+  - 챕터 제목(title)은 참고용이며, 정확도 평가에 사용하지 않음
 - [ ] **E2E 테스트** (⚠️ 실제 서버 실행, 실제 데이터만):
   - `backend/tests/test_e2e_structure_analysis.py` 생성
   - 전체 플로우: PDF 업로드 → 파싱 → 구조 분석
     - 휴리스틱 구조 생성 검증
     - LLM 보정 구조 생성 검증 (실제 OpenAI API)
     - 최종 구조 확정 및 DB 저장 검증
-    - **캐시 재사용 검증**: 구조 분석 시 캐시된 파싱 결과 사용 확인 (API 호출 없음)
+    - **캐시 재사용 검증**: 구조 분석 시 캐시된 파싱 결과 사용 확인 (Upstage API 호출 없음)
+  - **정확도 평가** (Ground Truth 기반):
+    - 본문 시작 페이지 정확도: 휴리스틱(±3페이지), LLM(±1페이지)
+    - 챕터 개수 정확도: 휴리스틱(±2개), LLM(±1개)
+    - 챕터 시작 페이지 정확도: 각 챕터별 휴리스틱(±3페이지), LLM(±2페이지)
+    - ⚠️ 중요: 페이지 번호만 비교 (챕터 제목은 비교하지 않음)
   - 구조 분석 API 검증:
     - `GET /api/books/{id}/structure/candidates` (휴리스틱/LLM 보정 구조, 샘플 페이지)
     - `POST /api/books/{id}/structure/final` (DB 저장, Chapter 재생성, 상태 변경)
+  - **Phase 2 E2E 테스트와 연결성**:
+    - Phase 2에서 파싱된 book_id 재사용 또는 동일 PDF 파일 사용
+    - Phase 2에서 생성된 캐시 파일(`data/cache/upstage/{hash}.json`) 재사용 확인
   - 다양한 PDF 형식: 한국어/영어 책, 다양한 챕터 구조
+- [ ] **평가-수정 사이클**:
+  - 문제 발견 시 사용자 보고 및 수정
+  - 재테스트 및 정확도 재평가
+  - 모든 메트릭 통과 확인
 - [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] 구조 분석 모듈 E2E 테스트 완료"` → `git push origin main`
 
 **⚠️ 검증 기준**:
 - ✅ E2E 테스트 통과 (실제 서버 실행, 실제 데이터 사용)
-- ✅ 캐시 재사용 검증 통과 (구조 분석 시 캐시된 파싱 결과 사용 확인)
+- ✅ 캐시 재사용 검증 통과 (구조 분석 시 캐시된 파싱 결과 사용 확인, Upstage API 호출 없음)
 - ✅ 휴리스틱 구조 생성 검증 통과
 - ✅ LLM 보정 구조 생성 검증 통과 (실제 OpenAI API)
+- ✅ 정확도 평가 통과 (Ground Truth 기반, 페이지 번호만 비교)
+  - 본문 시작 페이지: 휴리스틱(±3페이지), LLM(±1페이지)
+  - 챕터 개수: 휴리스틱(±2개), LLM(±1개)
+  - 챕터 시작 페이지: 각 챕터별 휴리스틱(±3페이지), LLM(±2페이지)
+- ✅ Phase 2 E2E 테스트와 연결성 확인 (캐시 재사용)
 - ✅ 변수명/함수명 Align 완료
 - ✅ 로깅 형식 준수 (`[INFO]`, `[ERROR]`, 이모지 없음)
 
