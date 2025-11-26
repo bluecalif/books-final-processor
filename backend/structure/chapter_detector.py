@@ -1,232 +1,223 @@
 """
-챕터 탐지 모듈
+챕터 경계 탐지 모듈
 
-페이지 상단 요소 분석 및 정규식 패턴 매칭으로 챕터를 탐지합니다.
+레이아웃 신호와 텍스트 패턴을 결합하여 챕터 경계를 탐지합니다.
 """
-import logging
+
 import re
+import logging
 from typing import Dict, Any, List, Optional
-from backend.config.constants import CHAPTER_PATTERNS
+from backend.config.constants import (
+    CHAPTER_PATTERNS,
+    MIN_CHAPTER_SPACING,
+    LARGE_FONT_THRESHOLD,
+    SCORE_THRESHOLD,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class ChapterDetector:
-    """챕터 탐지 클래스"""
+    """챕터 경계 탐지 클래스"""
 
     def __init__(self):
-        """초기화"""
-        # 정규식 패턴 컴파일
-        self.patterns = [re.compile(pattern) for pattern in CHAPTER_PATTERNS]
+        """챕터 탐지기 초기화"""
+        pass
 
     def detect_chapters(
         self, parsed_data: Dict[str, Any], main_pages: List[int]
     ) -> List[Dict[str, Any]]:
         """
-        챕터 탐지
+        챕터 경계 탐지
 
         Args:
-            parsed_data: PDFParser.parse_pdf() 결과
-            main_pages: 본문 페이지 번호 리스트
+            parsed_data: PDF 파싱 결과
+            main_pages: 본문 페이지 목록
 
         Returns:
             [
                 {
                     "id": "ch1",
                     "number": 1,
-                    "title": "제1장 제목",
+                    "title": "제1장 의식의 본질",
                     "start_page": 4,
-                    "end_page": 32
+                    "end_page": 25,
+                    "score": 85.0,
+                    "detection_method": "korean_chapter"
                 },
                 ...
             ]
         """
-        logger.info("[INFO] Detecting chapters...")
+        logger.info(f"[INFO] Detecting chapters in {len(main_pages)} main pages...")
 
         pages = parsed_data.get("pages", [])
-        if not pages:
-            logger.warning("[WARNING] No pages found in parsed_data")
-            return []
 
-        # 본문 페이지만 필터링
-        main_pages_set = set(main_pages)
-        main_pages_data = [
-            p for p in pages if p.get("page_number") in main_pages_set
-        ]
+        # Main 페이지만 필터링
+        main_page_objects = [p for p in pages if p["page_number"] in main_pages]
 
-        # 챕터 후보 탐지
-        chapter_candidates = self._detect_chapter_candidates(main_pages_data)
+        # 1. 챕터 제목 후보 탐지
+        candidates = []
+        for page in main_page_objects:
+            page_candidates = self._find_chapter_candidates(page)
+            candidates.extend(page_candidates)
 
-        if not chapter_candidates:
-            logger.info("[INFO] No chapters detected")
-            return []
+        logger.info(f"[INFO] Found {len(candidates)} chapter title candidates")
 
-        # 챕터 범위 계산
-        chapters = self._calculate_chapter_ranges(
-            chapter_candidates, main_pages_data
-        )
+        # 2. 점수 기반 필터링
+        chapters = []
+        for candidate in candidates:
+            if candidate["score"] >= SCORE_THRESHOLD:
+                chapters.append(candidate)
+                logger.info(
+                    f"[INFO] Chapter {candidate['number']}: '{candidate['title']}' "
+                    f"(page {candidate['start_page']}, score: {candidate['score']:.1f})"
+                )
+
+        # 3. 품질 검증 및 정제
+        chapters = self._validate_and_refine_chapters(chapters, main_pages)
 
         logger.info(f"[INFO] Detected {len(chapters)} chapters")
-        for ch in chapters:
-            logger.info(
-                f"  Chapter {ch['number']}: '{ch['title']}' "
-                f"(pages {ch['start_page']}-{ch['end_page']})"
-            )
-
         return chapters
 
-    def _detect_chapter_candidates(
-        self, pages: List[Dict]
-    ) -> List[Dict[str, Any]]:
+    def _find_chapter_candidates(self, page: Dict) -> List[Dict[str, Any]]:
         """
-        챕터 후보 탐지
-
-        페이지 상단 요소(y0 작음, font_size 큼)에서 챕터 패턴 매칭
-
-        Returns:
-            [
-                {"page_number": 4, "title": "제1장 제목", "number": 1},
-                ...
-            ]
+        페이지에서 챕터 제목 후보 찾기
         """
         candidates = []
+        elements = page.get("elements", [])
 
-        for page in pages:
-            page_num = page.get("page_number", 0)
-            elements = page.get("elements", [])
-
-            if not elements:
+        for elem in elements:
+            text = elem.get("text", "").strip()
+            if not text:  # 빈 문자열만 제외 (한글 챕터 "1장"=2글자 허용)
                 continue
 
-            # 페이지 상단 요소 찾기 (y0가 작은 순서대로)
-            top_elements = sorted(
-                elements,
-                key=lambda e: e.get("bbox", {}).get("y0", 1.0),
-            )[:5]  # 상위 5개 요소만 검사
+            # 텍스트 패턴 매칭
+            for pattern_name, (pattern, base_score) in CHAPTER_PATTERNS.items():
+                match = pattern.match(text)
+                if match:
+                    # 점수 계산
+                    score = self._calculate_chapter_score(
+                        elem, pattern_name, base_score
+                    )
 
-            for elem in top_elements:
-                text = elem.get("text", "").strip()
-                if not text:
-                    continue
+                    # 챕터 번호 및 제목 추출
+                    groups = match.groups()
+                    chapter_number = int(groups[0]) if groups[0].isdigit() else 0
+                    chapter_title = groups[1].strip() if len(groups) > 1 else text
 
-                # 폰트 크기 확인 (큰 폰트 우선)
-                font_size = elem.get("font_size", 12)
-                if font_size < 14:  # 최소 14px 이상
-                    continue
+                    candidates.append(
+                        {
+                            "id": f"ch{chapter_number}",
+                            "number": chapter_number,
+                            "title": text,
+                            "start_page": page["page_number"],
+                            "end_page": None,  # 나중에 설정
+                            "score": score,
+                            "detection_method": pattern_name,
+                            "element": elem,
+                        }
+                    )
+                    break
 
-                # 챕터 패턴 매칭
-                chapter_info = self._match_chapter_pattern(text)
-                if chapter_info:
-                    chapter_info["page_number"] = page_num
-                    chapter_info["title"] = text
-                    candidates.append(chapter_info)
-                    break  # 한 페이지당 하나의 챕터만
+        return candidates
 
-        # 중복 제거 (같은 페이지에 여러 후보가 있는 경우)
-        seen_pages = set()
-        unique_candidates = []
-        for candidate in candidates:
-            page_num = candidate["page_number"]
-            if page_num not in seen_pages:
-                seen_pages.add(page_num)
-                unique_candidates.append(candidate)
-
-        # 페이지 번호 순으로 정렬
-        unique_candidates.sort(key=lambda x: x["page_number"])
-
-        logger.info(f"[INFO] Found {len(unique_candidates)} chapter candidates")
-        return unique_candidates
-
-    def _match_chapter_pattern(self, text: str) -> Optional[Dict[str, Any]]:
+    def _calculate_chapter_score(
+        self, elem: Dict, pattern_name: str, base_score: float
+    ) -> float:
         """
-        텍스트에서 챕터 패턴 매칭
+        챕터 제목 후보의 점수 계산
 
-        Args:
-            text: 검사할 텍스트
-
-        Returns:
-            {"number": 1, ...} 또는 None
+        점수 구성:
+        - 텍스트 패턴 점수: 35-55점 (base_score)
+        - 레이아웃 점수: 0-45점
+          - 큰 폰트 크기: +25점 (강화)
+          - 페이지 상단 배치: +20점 (강화)
+          - 카테고리가 heading: +15점
+          - 짧은 텍스트: +10점 (챕터 제목은 짧음)
         """
-        for pattern in self.patterns:
-            match = pattern.search(text)
-            if match:
-                # 숫자 추출
-                number = self._extract_chapter_number(text, match)
-                return {"number": number}
-        return None
+        score = base_score
 
-    def _extract_chapter_number(self, text: str, match: re.Match) -> Optional[int]:
+        # 레이아웃 점수
+        font_size = elem.get("font_size", 12)
+        bbox = elem.get("bbox", {})
+        category = elem.get("category", "")
+        text = elem.get("text", "").strip()
+        y0 = bbox.get("y0", 0.5)
+
+        # 1. 큰 폰트 (강화)
+        if font_size >= 20:
+            score += 30  # 매우 큰 폰트
+        elif font_size >= LARGE_FONT_THRESHOLD:
+            score += 20  # 큰 폰트
+
+        # 2. 페이지 상단 배치 (강화)
+        if y0 < 0.1:
+            score += 25  # 맨 위
+        elif y0 < 0.2:
+            score += 20  # 상단
+
+        # 3. Heading 카테고리
+        if category in ["heading", "heading1", "title"]:
+            score += 15
+
+        # 4. 짧은 텍스트 (챕터 제목은 대부분 짧음)
+        if len(text) <= 20:  # "1장", "제1장 제목" 등
+            score += 10
+
+        return min(100.0, score)
+
+    def _validate_and_refine_chapters(
+        self, chapters: List[Dict], main_pages: List[int]
+    ) -> List[Dict]:
         """
-        챕터 번호 추출
+        챕터 목록 검증 및 정제
 
-        Args:
-            text: 전체 텍스트
-            match: 정규식 매치 객체
-
-        Returns:
-            챕터 번호 또는 None
+        - 챕터 번호 순서대로 정렬
+        - 중복 제거
+        - 최소 간격 확인
+        - end_page 설정
         """
-        # 패턴 1: "제1장" -> 1
-        match1 = re.search(r"제\s*(\d+)\s*장", text)
-        if match1:
-            return int(match1.group(1))
-
-        # 패턴 2: "CHAPTER 1" -> 1
-        match2 = re.search(r"CHAPTER\s+(\d+)", text, re.IGNORECASE)
-        if match2:
-            return int(match2.group(1))
-
-        # 패턴 3: "1. 제목" -> 1
-        match3 = re.search(r"^(\d+)\.\s+", text)
-        if match3:
-            return int(match3.group(1))
-
-        return None
-
-    def _calculate_chapter_ranges(
-        self, candidates: List[Dict], pages: List[Dict]
-    ) -> List[Dict[str, Any]]:
-        """
-        챕터 범위 계산
-
-        각 챕터의 start_page와 end_page를 계산합니다.
-        end_page는 다음 챕터의 start_page - 1입니다.
-
-        Args:
-            candidates: 챕터 후보 리스트
-            pages: 페이지 리스트
-
-        Returns:
-            챕터 리스트 (start_page, end_page 포함)
-        """
-        if not candidates:
+        if not chapters:
             return []
 
-        chapters = []
-        total_pages = max([p.get("page_number", 0) for p in pages]) if pages else 0
+        # 1. 챕터 번호 순서대로 정렬
+        chapters = sorted(chapters, key=lambda x: x["number"])
 
-        for i, candidate in enumerate(candidates):
-            start_page = candidate["page_number"]
-            title = candidate["title"]
-            number = candidate.get("number", i + 1)
+        # 2. 중복 제거 (같은 번호의 챕터는 점수가 높은 것만)
+        unique_chapters = {}
+        for ch in chapters:
+            ch_num = ch["number"]
+            if (
+                ch_num not in unique_chapters
+                or ch["score"] > unique_chapters[ch_num]["score"]
+            ):
+                unique_chapters[ch_num] = ch
 
-            # end_page 계산
-            if i < len(candidates) - 1:
-                # 다음 챕터의 start_page - 1
-                end_page = candidates[i + 1]["page_number"] - 1
+        chapters = list(unique_chapters.values())
+        chapters = sorted(chapters, key=lambda x: x["number"])
+
+        # 3. 최소 간격 확인
+        filtered = []
+        for i, ch in enumerate(chapters):
+            # 이전 챕터와의 간격 확인
+            if (
+                filtered
+                and ch["start_page"] - filtered[-1]["start_page"]
+                < MIN_CHAPTER_SPACING
+            ):
+                logger.warning(
+                    f"[WARNING] Skipping chapter {ch['number']} - too close to previous chapter "
+                    f"({ch['start_page'] - filtered[-1]['start_page']} pages apart)"
+                )
+                continue
+
+            filtered.append(ch)
+
+        # 4. end_page 설정
+        for i, ch in enumerate(filtered):
+            if i < len(filtered) - 1:
+                ch["end_page"] = filtered[i + 1]["start_page"] - 1
             else:
-                # 마지막 챕터는 본문 끝까지
-                end_page = total_pages
+                ch["end_page"] = main_pages[-1] if main_pages else ch["start_page"]
 
-            chapters.append(
-                {
-                    "id": f"ch{number}",
-                    "number": number,
-                    "title": title,
-                    "start_page": start_page,
-                    "end_page": end_page,
-                }
-            )
-
-        return chapters
-
+        return filtered
