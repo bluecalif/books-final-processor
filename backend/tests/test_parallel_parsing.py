@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 TEST_PDF_PATH = (
     Path(__file__).parent.parent.parent / "data" / "input" / "1등의 통찰.pdf"
 )
+TEST_PDF_PATH_2 = (
+    Path(__file__).parent.parent.parent
+    / "data"
+    / "input"
+    / "10년후 이곳은 제2의 판교.pdf"
+)
 
 
 @pytest.mark.e2e
@@ -194,4 +200,107 @@ def test_parallel_parsing_cache_compatibility():
     )
     logger.info(
         f"  - 병렬 처리: {cached_result.get('metadata', {}).get('parallel_processing', False)}"
+    )
+
+
+@pytest.mark.e2e
+def test_parallel_parsing_cache_verification_new_pdf():
+    """
+    새로운 PDF 파일로 캐시 동작 검증
+    
+    요구사항:
+    1. 첫 번째 실행: 캐시 없음 → 파싱 필요 (병렬 처리)
+    2. 두 번째 실행: 캐시 있음 → 파싱 없음 (캐시 사용)
+    3. 첫 번째 실행 시에도 청크 나눠서 진행할 때 불필요한 API 호출이 없어야 함
+    """
+    # PDF 파일 존재 확인
+    if not TEST_PDF_PATH_2.exists():
+        pytest.skip(f"Test PDF file not found: {TEST_PDF_PATH_2}")
+
+    from backend.parsers.cache_manager import CacheManager
+
+    cache_manager = CacheManager()
+
+    # 캐시 파일 삭제 (첫 번째 실행을 위해)
+    cached_result_before = cache_manager.get_cached_result(str(TEST_PDF_PATH_2))
+    if cached_result_before:
+        # 캐시 파일 삭제
+        cache_key = cache_manager.get_cache_key(str(TEST_PDF_PATH_2))
+        cache_file = cache_manager.cache_dir / f"{cache_key}.json"
+        if cache_file.exists():
+            cache_file.unlink()
+            logger.info(f"[TEST] 기존 캐시 파일 삭제: {cache_file}")
+
+    # PDFParser 초기화
+    pdf_parser = PDFParser()
+
+    # 첫 번째 파싱 (캐시 미스, 병렬 처리 예상)
+    logger.info("[TEST] 첫 번째 파싱 시작 (캐시 미스 예상)")
+    start_time_1 = time.time()
+    result1 = pdf_parser.parse_pdf(str(TEST_PDF_PATH_2), use_cache=True)
+    elapsed_time_1 = time.time() - start_time_1
+
+    # 첫 번째 파싱 결과 검증
+    assert result1 is not None
+    assert "pages" in result1
+    assert "metadata" in result1
+
+    metadata1 = result1.get("metadata", {})
+    if metadata1.get("parallel_processing"):
+        logger.info(
+            f"[TEST] 첫 번째 파싱: 병렬 처리 확인 ({metadata1.get('total_chunks', 0)}개 청크)"
+        )
+        assert (
+            metadata1.get("pages_per_chunk") == 10
+        ), "병렬 처리 청크 크기가 10이 아님"
+
+    # 캐시 파일 생성 확인
+    cached_result_after = cache_manager.get_cached_result(str(TEST_PDF_PATH_2))
+    assert cached_result_after is not None, "첫 번째 파싱 후 캐시 파일이 생성되지 않음"
+    logger.info(f"[TEST] 첫 번째 파싱 완료: {elapsed_time_1:.2f}초, 캐시 파일 생성 확인")
+
+    # 두 번째 파싱 (캐시 히트 예상)
+    logger.info("[TEST] 두 번째 파싱 시작 (캐시 히트 예상)")
+    start_time_2 = time.time()
+    result2 = pdf_parser.parse_pdf(str(TEST_PDF_PATH_2), use_cache=True)
+    elapsed_time_2 = time.time() - start_time_2
+
+    # 두 번째 파싱은 캐시를 사용하므로 훨씬 빨라야 함
+    assert elapsed_time_2 < elapsed_time_1, (
+        f"두 번째 파싱이 첫 번째보다 느림: {elapsed_time_2:.2f}초 vs {elapsed_time_1:.2f}초 "
+        "(캐시를 사용해야 함)"
+    )
+
+    # 두 번째 파싱 결과 검증
+    assert result2 is not None
+    assert "pages" in result2
+    assert "metadata" in result2
+
+    # 결과 비교 (페이지 수, Elements 개수)
+    pages1 = result1.get("pages", [])
+    pages2 = result2.get("pages", [])
+
+    assert len(pages1) == len(
+        pages2
+    ), f"캐시 재사용 시 페이지 수가 다름: {len(pages1)} vs {len(pages2)}"
+
+    assert result1.get("total_elements") == result2.get(
+        "total_elements"
+    ), f"캐시 재사용 시 Elements 개수가 다름: {result1.get('total_elements')} vs {result2.get('total_elements')}"
+
+    logger.info(f"[TEST] 캐시 검증 완료:")
+    logger.info(f"  - 첫 번째 파싱: {elapsed_time_1:.2f}초, {len(pages1)} 페이지")
+    logger.info(f"  - 두 번째 파싱: {elapsed_time_2:.2f}초, {len(pages2)} 페이지")
+    logger.info(
+        f"  - 성능 향상: {((elapsed_time_1 - elapsed_time_2) / elapsed_time_1 * 100):.1f}% 빠름"
+    )
+    logger.info(
+        f"  - 병렬 처리: {metadata1.get('parallel_processing', False)}"
+    )
+
+    print(f"\n[RESULT] 캐시 검증:")
+    print(f"  - 첫 번째 파싱: {elapsed_time_1:.2f}초 (캐시 미스)")
+    print(f"  - 두 번째 파싱: {elapsed_time_2:.2f}초 (캐시 히트)")
+    print(
+        f"  - 성능 향상: {((elapsed_time_1 - elapsed_time_2) / elapsed_time_1 * 100):.1f}% 빠름"
     )
