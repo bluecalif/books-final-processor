@@ -81,6 +81,7 @@ class StructureBuilder:
                 "chapter_count": len(chapters),
                 "has_start": len(boundaries["start"]["pages"]) > 0,
                 "has_end": len(boundaries["end"]["pages"]) > 0,
+                "confidence": boundaries.get("confidence", {}),
             },
         }
 
