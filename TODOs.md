@@ -348,7 +348,21 @@ frontend/
 
 **⚠️ Git 주의사항**: 작업 전 `git status`, `git pull origin main` 확인 / 작업 후 `git add .`, `git commit`, `git push origin main` 실행
 
-#### 3.1 StructureBuilder 구현 (휴리스틱 기반)
+#### 3.1 참고 파일 추가 및 분석
+- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
+- [ ] `docs/reference_code/structure/` 디렉토리 생성
+- [ ] 선행 서비스의 구조 분석 관련 파일 확인 및 목록 작성
+- [ ] 참고 파일 추가 (`_REF` 접미사 사용):
+  - `content_boundary_detector_REF.py`
+  - `chapter_detector_REF.py`
+  - `structure_builder_REF.py`
+  - `llm_structure_refiner_REF.py` (있는 경우)
+- [ ] 참고 파일 상단에 주석 추가 (출처, 참고 목적, 주요 차이점)
+- [ ] 기능 분석 및 현재 프로젝트 구조 매핑 (`ALIGN_PLAN.md` 작성)
+- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] 참고 파일 추가 및 분석 완료"` → `git push origin main`
+
+#### 3.2 ContentBoundaryDetector 및 ChapterDetector 구현 (휴리스틱 기반)
+- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
 - [ ] `backend/structure/content_boundary_detector.py` 생성
   - `ContentBoundaryDetector` 클래스
   - `detect_boundaries()`: 키워드 기반 경계 탐지
@@ -364,14 +378,20 @@ frontend/
     - CHAPTER_PATTERNS 정규식 매칭: `r"^제\s*\d+\s*장"`, `r"^CHAPTER\s+\d+"`, `r"^\d+\.\s*[^.]+\s*$"`
     - 챕터 시작/끝 페이지 계산
     - 반환: 챕터 리스트
+- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] ContentBoundaryDetector 및 ChapterDetector 구현 완료"` → `git push origin main`
+
+#### 3.3 StructureBuilder 구현 (휴리스틱 통합)
+- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
 - [ ] `backend/structure/structure_builder.py` 생성
   - `StructureBuilder` 클래스
   - `build_structure(parsed_data)`: 최종 구조 생성
     - 경계 탐지 → 챕터 탐지 → 최종 구조 JSON 생성
     - 반환: `{"start": {...}, "main": {...}, "end": {...}, "metadata": {...}}`
   - 참고: `docs/book-assistant_repomix_backend.md` (Line 5448-5538)
+- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] StructureBuilder 구현 완료"` → `git push origin main`
 
-#### 3.2 LLMStructureRefiner 구현 (core_logics.md)
+#### 3.4 LLMStructureRefiner 구현 (core_logics.md)
+- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
 - [ ] `backend/structure/llm_structure_refiner.py` 생성
   - `LLMStructureRefiner` 클래스
   - Pydantic 모델: `LLMChapterSuggestion`, `LLMStructureSuggestion`
@@ -393,8 +413,10 @@ frontend/
     - OpenAI API 호출 (gpt-4o-mini, temperature=0.3, response_format="json_object")
     - Pydantic 검증
     - 실패 시 휴리스틱 구조로 fallback
+- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] LLMStructureRefiner 구현 완료"` → `git push origin main`
 
-#### 3.3 구조 분석 API 구현
+#### 3.5 구조 분석 API 스키마 및 서비스 구현
+- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
 - [ ] `backend/api/schemas/structure.py` 생성
   - `LLMChapterSuggestion`: `number`, `title`, `start_page`, `end_page`
   - `LLMStructureSuggestion`: `main_start_page`, `main_end_page`, `chapters`, `notes_pages`, `issues`
@@ -414,6 +436,10 @@ frontend/
     - 기존 Chapter 레코드 삭제 후 재생성
     - 상태 변경: `parsed` → `structured`
     - 참고: `docs/core_logics.md` Line 501-711
+- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] 구조 분석 API 스키마 및 서비스 구현 완료"` → `git push origin main`
+
+#### 3.6 구조 분석 API 라우터 구현
+- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
 - [ ] `backend/api/routers/structure.py` 생성
   - `GET /api/books/{id}/structure/candidates`: 구조 후보 반환
     - 휴리스틱 구조 + LLM 보정 구조
@@ -424,8 +450,10 @@ frontend/
     - Chapter 테이블 재생성
     - 상태 변경: `parsed` → `structured`
 - [ ] `backend/api/main.py`에 structure 라우터 등록
+- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] 구조 분석 API 라우터 구현 완료"` → `git push origin main`
 
-#### 3.4 구조 분석 모듈 테스트
+#### 3.7 구조 분석 모듈 E2E 테스트
+- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
 - [ ] **E2E 테스트** (⚠️ 실제 서버 실행, 실제 데이터만):
   - `backend/tests/test_e2e_structure_analysis.py` 생성
   - 전체 플로우: PDF 업로드 → 파싱 → 구조 분석
@@ -437,10 +465,20 @@ frontend/
     - `GET /api/books/{id}/structure/candidates` (휴리스틱/LLM 보정 구조, 샘플 페이지)
     - `POST /api/books/{id}/structure/final` (DB 저장, Chapter 재생성, 상태 변경)
   - 다양한 PDF 형식: 한국어/영어 책, 다양한 챕터 구조
+- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] 구조 분석 모듈 E2E 테스트 완료"` → `git push origin main`
 
-**검증**: E2E 테스트 통과 (⚠️ 실제 서버 실행, 실제 PDF, 실제 Upstage API, 실제 LLM 사용, Mock 사용 금지)
+**⚠️ 검증 기준**:
+- ✅ E2E 테스트 통과 (실제 서버 실행, 실제 데이터 사용)
+- ✅ 캐시 재사용 검증 통과 (구조 분석 시 캐시된 파싱 결과 사용 확인)
+- ✅ 휴리스틱 구조 생성 검증 통과
+- ✅ LLM 보정 구조 생성 검증 통과 (실제 OpenAI API)
+- ✅ 변수명/함수명 Align 완료
+- ✅ 로깅 형식 준수 (`[INFO]`, `[ERROR]`, 이모지 없음)
 
-**⚠️ Git 커밋**: Phase 3 완료 후 `git add .`, `git commit -m "[Phase 3] 구조 분석 모듈 구현"`, `git push origin main`
+**⚠️ Git 커밋 전략**:
+- 각 단계(3.1, 3.2, 3.3, 3.4, 3.5, 3.6) 완료 후 즉시 커밋
+- 작은 단위로 커밋하여 문제 발생 시 원복 가능하도록
+- 커밋 메시지 형식: `[Phase 3] 작업 단계: 상세 설명`
 
 ---
 
