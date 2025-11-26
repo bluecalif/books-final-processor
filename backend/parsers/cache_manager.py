@@ -98,7 +98,15 @@ class CacheManager:
             캐시 유효 여부
         """
         cache_file = self.get_cache_path(cache_key)
-        return cache_file.exists()
+        exists = cache_file.exists()
+        if exists:
+            file_size = cache_file.stat().st_size
+            logger.debug(
+                f"[DEBUG] Cache file exists: {cache_file}, size: {file_size} bytes"
+            )
+        else:
+            logger.debug(f"[DEBUG] Cache file does not exist: {cache_file}")
+        return exists
 
     def get_cached_result(self, pdf_path: str) -> Optional[Dict[str, Any]]:
         """
@@ -112,23 +120,48 @@ class CacheManager:
         """
         try:
             cache_key = self.get_cache_key(pdf_path)
-            
-            if not self.is_cache_valid(pdf_path, cache_key):
-                return None
-            
             cache_file = self.get_cache_path(cache_key)
             
-            with open(cache_file, 'r', encoding='utf-8') as f:
-                cached_data = json.load(f)
+            logger.debug(
+                f"[DEBUG] get_cached_result: pdf_path={pdf_path}, "
+                f"cache_key={cache_key}, cache_file={cache_file}"
+            )
             
-            # 캐시 메타데이터 제거
-            cached_data.pop("_cache_meta", None)
+            if not self.is_cache_valid(pdf_path, cache_key):
+                logger.debug(f"[DEBUG] Cache file does not exist: {cache_file}")
+                return None
             
-            logger.info(f"[INFO] Cache hit for {pdf_path}")
-            return cached_data
+            # 파일 읽기 시도
+            try:
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    cached_data = json.load(f)
+                
+                # 캐시 메타데이터 제거
+                cached_data.pop("_cache_meta", None)
+                
+                cached_pages = cached_data.get('usage', {}).get('pages', 0)
+                logger.info(
+                    f"[INFO] Cache hit for {pdf_path}: "
+                    f"cache_key={cache_key}, pages={cached_pages}"
+                )
+                return cached_data
+            except json.JSONDecodeError as e:
+                logger.error(
+                    f"[ERROR] Failed to parse cache file {cache_file}: {e}"
+                )
+                return None
+            except Exception as e:
+                logger.error(
+                    f"[ERROR] Failed to read cache file {cache_file}: {e}"
+                )
+                return None
             
         except Exception as e:
-            logger.warning(f"[WARNING] Failed to retrieve cache for {pdf_path}: {e}")
+            logger.warning(
+                f"[WARNING] Failed to retrieve cache for {pdf_path}: {e}"
+            )
+            import traceback
+            logger.debug(f"[DEBUG] Traceback: {traceback.format_exc()}")
             return None
 
     def save_cache(self, pdf_path: str, result: Dict[str, Any]) -> None:
@@ -209,7 +242,31 @@ class CacheManager:
             temp_file.replace(cache_file)
             logger.info(f"[CACHE_SAVE] 원자적 이동 완료: {cache_file}")
             
-            final_exists = cache_file.exists()
+            # 파일이 실제로 저장되었는지 확인 (최대 3번 재시도)
+            final_exists = False
+            for retry in range(3):
+                time.sleep(0.1)  # 파일 시스템 동기화 대기
+                final_exists = cache_file.exists()
+                if final_exists:
+                    final_size = cache_file.stat().st_size
+                    logger.info(
+                        f"[CACHE_SAVE] 캐시 파일 저장 확인 (시도 {retry + 1}/3): "
+                        f"존재={final_exists}, 크기={final_size} bytes"
+                    )
+                    break
+                else:
+                    logger.warning(
+                        f"[CACHE_SAVE] 캐시 파일 저장 확인 실패 (시도 {retry + 1}/3): "
+                        f"파일이 아직 존재하지 않음"
+                    )
+            
+            if not final_exists:
+                logger.error(
+                    f"[CACHE_SAVE] [ERROR] 캐시 파일 저장 실패: "
+                    f"파일이 생성되지 않음: {cache_file}"
+                )
+                raise Exception(f"Failed to save cache file: {cache_file}")
+            
             final_size = cache_file.stat().st_size if final_exists else 0
             logger.info(f"[CACHE_SAVE] 최종 파일 존재: {final_exists}")
             logger.info(f"[CACHE_SAVE] 최종 파일 크기: {final_size} bytes")

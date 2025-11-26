@@ -58,15 +58,36 @@ class UpstageAPIClient:
                 }
             }
         """
+        start_time = time.time()
+        logger.info(f"[UpstageAPIClient] parse_pdf() 시작: {pdf_path}, use_cache={self.use_cache}")
+        
         # 1. 캐시 확인 (전체 파일에 대한 캐시)
         if self.use_cache and self.cache_manager:
+            cache_check_start = time.time()
             cached_result = self.cache_manager.get_cached_result(pdf_path)
+            cache_check_time = time.time() - cache_check_start
+            
             if cached_result:
-                logger.info(f"[INFO] Cache hit for {pdf_path}, using cached result")
+                elapsed_time = time.time() - start_time
+                logger.info(
+                    f"[UpstageAPIClient] [CACHE_HIT] 캐시 확인 완료 ({cache_check_time:.3f}초): {pdf_path}"
+                )
+                logger.info(
+                    f"[UpstageAPIClient] [CACHE_HIT] 캐시된 페이지 수: {cached_result.get('usage', {}).get('pages', 0)}"
+                )
+                logger.info(
+                    f"[UpstageAPIClient] parse_pdf() 완료 (캐시 사용): {elapsed_time:.3f}초"
+                )
                 return cached_result
+            else:
+                logger.warning(
+                    f"[UpstageAPIClient] [CACHE_MISS] 캐시 확인 완료 ({cache_check_time:.3f}초): {pdf_path} - 캐시 없음"
+                )
+        else:
+            logger.info(f"[UpstageAPIClient] [CACHE_DISABLED] 캐시 사용 안 함: {pdf_path}")
         
         # 2. 캐시 미스: API 호출 필요
-        logger.info(f"[INFO] Cache miss for {pdf_path}, calling Upstage API")
+        logger.info(f"[UpstageAPIClient] [API_CALL_REQUIRED] API 호출 시작: {pdf_path}")
         
         # PDF 페이지 수 확인
         total_pages = self._get_pdf_page_count(pdf_path)
@@ -92,8 +113,19 @@ class UpstageAPIClient:
         
         # 3. 캐시 저장 (API 호출 결과)
         if self.use_cache and self.cache_manager:
+            cache_save_start = time.time()
             self.cache_manager.save_cache(pdf_path, result)
-            logger.info(f"[INFO] Cached API response for {pdf_path}")
+            cache_save_time = time.time() - cache_save_start
+            logger.info(
+                f"[UpstageAPIClient] [CACHE_SAVE] 캐시 저장 완료 ({cache_save_time:.3f}초): {pdf_path}"
+            )
+        
+        elapsed_time = time.time() - start_time
+        total_pages_parsed = result.get("usage", {}).get("pages", 0)
+        logger.info(
+            f"[UpstageAPIClient] parse_pdf() 완료 (API 호출): {elapsed_time:.3f}초, "
+            f"파싱된 페이지 수: {total_pages_parsed}"
+        )
         
         return result
 
@@ -129,6 +161,12 @@ class UpstageAPIClient:
         ThreadPoolExecutor를 사용하여 여러 청크를 동시에 파싱합니다.
         각 청크를 별도로 파싱한 후 결과를 병합합니다.
         """
+        parallel_start = time.time()
+        logger.info(
+            f"[UpstageAPIClient] [PARALLEL_START] 병렬 파싱 시작: {pdf_path}, "
+            f"총 {total_pages}페이지"
+        )
+        
         # 청크 생성 (10페이지씩)
         chunks = []
         for start_page in range(0, total_pages, self.PARALLEL_CHUNK_SIZE):
@@ -136,9 +174,12 @@ class UpstageAPIClient:
             chunks.append((start_page, end_page))
 
         logger.info(
-            f"[INFO] Created {len(chunks)} chunks for parallel processing "
-            f"({self.PARALLEL_CHUNK_SIZE} pages per chunk)"
+            f"[UpstageAPIClient] [PARALLEL_CHUNKS] {len(chunks)}개 청크 생성: "
+            f"각 청크 {self.PARALLEL_CHUNK_SIZE}페이지"
         )
+        
+        # API 호출 횟수 추적
+        api_call_count = 0
 
         # 병렬 처리
         chunk_results = []
@@ -160,31 +201,43 @@ class UpstageAPIClient:
                 try:
                     result = future.result()
                     chunk_results.append((start_page, result))
+                    chunk_pages = result.get("usage", {}).get("pages", 0)
+                    api_call_count += 1
                     logger.info(
-                        f"[INFO] Chunk completed: pages {start_page + 1}-{end_page} "
-                        f"({len(result.get('elements', []))} elements)"
+                        f"[UpstageAPIClient] [CHUNK_SUCCESS] 청크 완료: "
+                        f"페이지 {start_page + 1}-{end_page} ({chunk_pages}페이지 파싱), "
+                        f"{len(result.get('elements', []))} elements, "
+                        f"API 호출 횟수: {api_call_count}/{len(chunks)}"
                     )
                 except Exception as e:
                     logger.error(
-                        f"[ERROR] Chunk failed: pages {start_page + 1}-{end_page} - {e}"
+                        f"[UpstageAPIClient] [CHUNK_FAILED] 청크 실패: "
+                        f"페이지 {start_page + 1}-{end_page} - {e}"
                     )
                     failed_chunks.append((start_page, end_page, str(e)))
 
         # 실패한 청크 재시도
         if failed_chunks:
             logger.warning(
-                f"[WARNING] Retrying {len(failed_chunks)} failed chunks"
+                f"[UpstageAPIClient] [RETRY_START] {len(failed_chunks)}개 실패한 청크 재시도 시작"
             )
             for start_page, end_page, error in failed_chunks:
                 try:
+                    retry_start = time.time()
                     result = self._parse_chunk(pdf_path, start_page, end_page, retries)
+                    retry_time = time.time() - retry_start
                     chunk_results.append((start_page, result))
+                    chunk_pages = result.get("usage", {}).get("pages", 0)
+                    api_call_count += 1
                     logger.info(
-                        f"[INFO] Chunk retry succeeded: pages {start_page + 1}-{end_page}"
+                        f"[UpstageAPIClient] [RETRY_SUCCESS] 청크 재시도 성공: "
+                        f"페이지 {start_page + 1}-{end_page} ({chunk_pages}페이지 파싱), "
+                        f"소요 시간: {retry_time:.3f}초, API 호출 횟수: {api_call_count}"
                     )
                 except Exception as e:
                     logger.error(
-                        f"[ERROR] Chunk retry failed: pages {start_page + 1}-{end_page} - {e}"
+                        f"[UpstageAPIClient] [RETRY_FAILED] 청크 재시도 실패: "
+                        f"페이지 {start_page + 1}-{end_page} - {e}"
                     )
                     # 재시도 실패 시에도 계속 진행 (부분 성공 허용)
 
@@ -192,11 +245,27 @@ class UpstageAPIClient:
         chunk_results.sort(key=lambda x: x[0])
         merged_result = self._merge_chunk_results(chunk_results, total_pages)
 
-        logger.info(
-            f"[INFO] Parallel parsing completed: "
-            f"{len(chunks)} chunks, {len(merged_result['elements'])} total elements, "
-            f"{len(failed_chunks)} failed chunks"
+        parallel_time = time.time() - parallel_start
+        total_pages_parsed = sum(
+            chunk_result.get("usage", {}).get("pages", 0)
+            for _, chunk_result in chunk_results
         )
+        
+        logger.info(
+            f"[UpstageAPIClient] [PARALLEL_END] 병렬 파싱 완료: "
+            f"{parallel_time:.3f}초, {len(chunks)}개 청크 생성, "
+            f"{len(chunk_results)}개 청크 성공, {len(failed_chunks)}개 청크 실패, "
+            f"총 API 호출 횟수: {api_call_count}, "
+            f"총 파싱된 페이지 수: {total_pages_parsed} (예상: {total_pages}), "
+            f"{len(merged_result['elements'])} elements"
+        )
+        
+        if total_pages_parsed != total_pages:
+            logger.error(
+                f"[UpstageAPIClient] [ERROR] 페이지 수 불일치: "
+                f"예상 {total_pages}페이지, 실제 파싱 {total_pages_parsed}페이지 "
+                f"(차이: {total_pages_parsed - total_pages}페이지)"
+            )
 
         return merged_result
 
@@ -215,17 +284,50 @@ class UpstageAPIClient:
         Returns:
             API 응답 JSON
         """
+        chunk_start = time.time()
+        chunk_pages = end_page - start_page
+        logger.info(
+            f"[UpstageAPIClient] [CHUNK_START] 청크 파싱 시작: "
+            f"원본 파일 {pdf_path}, 페이지 {start_page + 1}-{end_page} ({chunk_pages}페이지)"
+        )
+        
         # 임시 파일로 PDF 분할
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
             temp_path = temp_file.name
 
         try:
+            split_start = time.time()
             self._split_pdf(pdf_path, start_page, end_page, temp_path)
+            split_time = time.time() - split_start
+            logger.info(
+                f"[UpstageAPIClient] [CHUNK_SPLIT] PDF 분할 완료: {split_time:.3f}초, "
+                f"임시 파일: {temp_path}"
+            )
+            
             # 분할된 PDF 파싱
-            return self._parse_single_pdf(temp_path, retries)
+            parse_start = time.time()
+            result = self._parse_single_pdf(temp_path, retries)
+            parse_time = time.time() - parse_start
+            chunk_time = time.time() - chunk_start
+            
+            parsed_pages = result.get("usage", {}).get("pages", 0)
+            logger.info(
+                f"[UpstageAPIClient] [CHUNK_END] 청크 파싱 완료: {chunk_time:.3f}초 "
+                f"(분할: {split_time:.3f}초, 파싱: {parse_time:.3f}초), "
+                f"파싱된 페이지 수: {parsed_pages} (예상: {chunk_pages})"
+            )
+            
+            if parsed_pages != chunk_pages:
+                logger.warning(
+                    f"[UpstageAPIClient] [CHUNK_WARNING] 페이지 수 불일치: "
+                    f"예상 {chunk_pages}페이지, 실제 {parsed_pages}페이지"
+                )
+            
+            return result
         finally:
             # 임시 파일 즉시 삭제
             Path(temp_path).unlink(missing_ok=True)
+            logger.debug(f"[UpstageAPIClient] [CHUNK_CLEANUP] 임시 파일 삭제: {temp_path}")
 
     def _merge_chunk_results(
         self, chunk_results: List[Tuple[int, Dict[str, Any]]], total_pages: int
@@ -284,6 +386,12 @@ class UpstageAPIClient:
         Raises:
             Exception: API 호출 실패 시
         """
+        api_start = time.time()
+        logger.info(
+            f"[UpstageAPIClient] [API_CALL] _parse_single_pdf() 시작: {pdf_path}, "
+            f"재시도 횟수: {retries}"
+        )
+        
         headers = {"Authorization": f"Bearer {self.api_key}"}
         data = {
             "ocr": "force",
@@ -292,7 +400,11 @@ class UpstageAPIClient:
         }
 
         for attempt in range(retries):
+            attempt_start = time.time()
             try:
+                logger.info(
+                    f"[UpstageAPIClient] [API_ATTEMPT] API 호출 시도 {attempt + 1}/{retries}: {pdf_path}"
+                )
                 with open(pdf_path, "rb") as f:
                     files = {"document": f}
                     response = requests.post(
@@ -303,31 +415,55 @@ class UpstageAPIClient:
                     result = response.json()
                     element_count = len(result.get("elements", []))
                     pages_count = result.get("usage", {}).get("pages", 0)
+                    attempt_time = time.time() - attempt_start
+                    total_time = time.time() - api_start
                     logger.info(
-                        f"[INFO] API returned {element_count} elements from {pages_count} pages"
+                        f"[UpstageAPIClient] [API_SUCCESS] API 호출 성공: "
+                        f"시도 {attempt + 1}/{retries}, 소요 시간: {attempt_time:.3f}초 (총 {total_time:.3f}초), "
+                        f"{element_count} elements, {pages_count} pages"
                     )
                     return result
                 elif response.status_code == 429:  # Rate limit
                     if attempt < retries - 1:
                         wait_time = 2**attempt  # 지수 백오프
                         logger.warning(
-                            f"[WARNING] Rate limited, waiting {wait_time}s before retry"
+                            f"[UpstageAPIClient] [API_RATE_LIMIT] Rate limit 발생, "
+                            f"{wait_time}초 대기 후 재시도 ({attempt + 1}/{retries}): {pdf_path}"
                         )
                         time.sleep(wait_time)
                         continue
                     else:
+                        logger.error(
+                            f"[UpstageAPIClient] [API_RATE_LIMIT_FAILED] Rate limit 초과, "
+                            f"모든 재시도 실패: {pdf_path}"
+                        )
                         raise Exception(f"Rate limit exceeded: {response.text}")
                 else:
+                    logger.error(
+                        f"[UpstageAPIClient] [API_ERROR] API 호출 실패: "
+                        f"시도 {attempt + 1}/{retries}, 상태 코드: {response.status_code}, "
+                        f"파일: {pdf_path}"
+                    )
                     raise Exception(
                         f"API call failed: {response.status_code} - {response.text}"
                     )
 
             except requests.exceptions.RequestException as e:
+                attempt_time = time.time() - attempt_start
                 if attempt < retries - 1:
-                    logger.warning(f"[WARNING] Request failed, retrying: {e}")
-                    time.sleep(2**attempt)  # 지수 백오프
+                    wait_time = 2**attempt  # 지수 백오프
+                    logger.warning(
+                        f"[UpstageAPIClient] [API_RETRY] 요청 실패, {wait_time}초 대기 후 재시도 "
+                        f"({attempt + 1}/{retries}): {e}, 소요 시간: {attempt_time:.3f}초"
+                    )
+                    time.sleep(wait_time)
                     continue
                 else:
+                    total_time = time.time() - api_start
+                    logger.error(
+                        f"[UpstageAPIClient] [API_FAILED] 모든 재시도 실패: "
+                        f"{retries}번 시도, 총 소요 시간: {total_time:.3f}초, 에러: {e}"
+                    )
                     raise Exception(f"API request failed after {retries} retries: {e}")
 
         raise Exception("API call failed after all retries")

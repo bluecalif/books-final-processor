@@ -7,6 +7,7 @@ Upstage API 응답을 구조화하고 페이지별로 그룹화합니다.
 import logging
 import re
 import copy
+import time
 from typing import Dict, Any, List, Optional
 from bs4 import BeautifulSoup
 from backend.parsers.upstage_api_client import UpstageAPIClient
@@ -61,11 +62,22 @@ class PDFParser:
                 "metadata": {...}
             }
         """
+        start_time = time.time()
+        logger.info(f"[PDFParser] parse_pdf() 시작: {file_path}, use_cache={use_cache}")
+        
         # 1. 캐시 확인
         if use_cache:
+            cache_check_start = time.time()
             cached_result = self.cache_manager.get_cached_result(file_path)
+            cache_check_time = time.time() - cache_check_start
+            
             if cached_result:
-                logger.info(f"[INFO] Cache hit for {file_path}")
+                logger.info(
+                    f"[PDFParser] [CACHE_HIT] 캐시 확인 완료 ({cache_check_time:.3f}초): {file_path}"
+                )
+                logger.info(
+                    f"[PDFParser] [CACHE_HIT] 캐시된 페이지 수: {cached_result.get('usage', {}).get('pages', 0)}"
+                )
                 # 캐시된 API 응답을 구조화
                 structured_elements = self._structure_elements(cached_result)
                 # 양면 분리 적용
@@ -75,6 +87,11 @@ class PDFParser:
                     pages = self._clean_pages(pages)
                 
                 original_pages = cached_result.get("usage", {}).get("pages", 0)
+                elapsed_time = time.time() - start_time
+                logger.info(
+                    f"[PDFParser] parse_pdf() 완료 (캐시 사용): {elapsed_time:.3f}초, "
+                    f"원본 {original_pages}페이지 → 최종 {len(pages)}페이지"
+                )
                 return {
                     "pages": pages,
                     "total_pages": len(pages),
@@ -83,10 +100,22 @@ class PDFParser:
                     "split_applied": len(pages) > original_pages if original_pages > 0 else False,
                     "metadata": cached_result.get("metadata", {}),
                 }
+            else:
+                logger.warning(
+                    f"[PDFParser] [CACHE_MISS] 캐시 확인 완료 ({cache_check_time:.3f}초): {file_path} - 캐시 없음"
+                )
+        else:
+            logger.info(f"[PDFParser] [CACHE_DISABLED] 캐시 사용 안 함: {file_path}")
 
         # 2. API 호출 (캐시 미스)
-        logger.info(f"[INFO] Cache miss for {file_path}, calling Upstage API")
+        api_call_start = time.time()
+        logger.info(f"[PDFParser] [API_CALL_START] UpstageAPIClient.parse_pdf() 호출 시작: {file_path}")
         api_response = self.api_client.parse_pdf(file_path)
+        api_call_time = time.time() - api_call_start
+        logger.info(
+            f"[PDFParser] [API_CALL_END] UpstageAPIClient.parse_pdf() 완료: {api_call_time:.3f}초, "
+            f"파싱된 페이지 수: {api_response.get('usage', {}).get('pages', 0)}"
+        )
 
         # 3. Elements 구조화
         structured_elements = self._structure_elements(api_response)
@@ -110,13 +139,16 @@ class PDFParser:
             "metadata": api_response.get("metadata", {}),
         }
 
-        # 7. 캐시 저장 (API 원본 응답 저장)
-        if use_cache:
-            self.cache_manager.save_cache(file_path, api_response)
-            logger.info(f"[INFO] Cached API response for {file_path}")
-
+        # 7. 캐시 저장은 UpstageAPIClient에서 이미 수행했으므로 여기서는 하지 않음
+        # (중복 저장 방지 및 API 호출 중복 방지)
         logger.info(
-            f"[INFO] Parsing completed: {original_pages} original pages → {len(pages)} final pages, {len(structured_elements)} elements"
+            f"[PDFParser] [CACHE_SAVE_SKIP] 캐시 저장은 UpstageAPIClient에서 이미 완료됨: {file_path}"
+        )
+
+        elapsed_time = time.time() - start_time
+        logger.info(
+            f"[PDFParser] parse_pdf() 완료 (API 호출): {elapsed_time:.3f}초, "
+            f"원본 {original_pages}페이지 → 최종 {len(pages)}페이지, {len(structured_elements)} elements"
         )
         return result
 
