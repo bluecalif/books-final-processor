@@ -3,6 +3,7 @@
 
 서문(start)/본문(main)/종문(end)를 통합하여 최종 구조 JSON을 생성합니다.
 """
+
 import logging
 from typing import Dict, Any
 from backend.structure.content_boundary_detector import ContentBoundaryDetector
@@ -53,13 +54,22 @@ class StructureBuilder:
             }
         """
         logger.info("[INFO] Building complete book structure...")
+        import time
+
+        build_start = time.time()
 
         # 1. 영역 경계 탐지 (서문/본문/종문)
+        boundary_start = time.time()
         boundaries = self.boundary_detector.detect_boundaries(parsed_data)
+        boundary_time = time.time() - boundary_start
+        logger.info(f"[INFO] 경계 탐지 완료: {boundary_time:.3f}초")
 
         # 2. 챕터 탐지 (본문 영역에서)
+        chapter_start = time.time()
         main_pages = boundaries["main"]["pages"]
         chapters = self.chapter_detector.detect_chapters(parsed_data, main_pages)
+        chapter_time = time.time() - chapter_start
+        logger.info(f"[INFO] 챕터 탐지 완료: {chapter_time:.3f}초")
 
         # 3. 최종 구조 생성
         structure = {
@@ -86,16 +96,11 @@ class StructureBuilder:
         }
 
         logger.info("[INFO] Structure building completed!")
-        logger.info(
-            f"  서문(start): {structure['start']['page_count']} pages"
-        )
+        logger.info(f"  서문(start): {structure['start']['page_count']} pages")
         logger.info(
             f"  본문(main):  {structure['main']['page_count']} pages "
             f"({len(chapters)} chapters)"
         )
-        logger.info(
-            f"  종문(end): {structure['end']['page_count']} pages"
-        )
+        logger.info(f"  종문(end): {structure['end']['page_count']} pages")
 
         return structure
-

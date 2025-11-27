@@ -24,6 +24,9 @@ class ChapterDetector:
             re.compile(r"Part\s*(\d+)", re.IGNORECASE),  # Part 1, Part1
             re.compile(r"^(\d+)\s*[장강부]"),  # 1장, 1강
             re.compile(r"^(\d+)\.\s*[가-힣]"),  # 1. 제목, 1.제목
+            re.compile(r"^(\d+)[_\-\s]+[가-힣]"),  # 1_제목, 1-제목, 1 제목
+            re.compile(r"^(0?\d+)[_\-\s]+[가-힣]"),  # 01 바빌론, 1_제목 (30개도시로읽는세계사)
+            re.compile(r"^(\d+)_\s*[가-힣A-Z0-9]"),  # 1_3D, 1_제목 (3D프린터의모든것 - 영문/숫자 허용)
         ]
         
         # 중요 페이지 범위 (GT 기준 ±1~2 페이지)

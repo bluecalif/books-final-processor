@@ -25,6 +25,9 @@ class ContentBoundaryDetector:
             re.compile(r"Part\s*\d+", re.IGNORECASE),  # Part 1, Part1
             re.compile(r"^\d+\s*[장강부]"),  # 1장, 1강
             re.compile(r"^\d+\.\s*[가-힣]"),  # 1. 제목, 1.제목
+            re.compile(r"^\d+[_\-\s]+[가-힣]"),  # 1_제목, 1-제목, 1 제목
+            re.compile(r"^0?\d+[_\-\s]+[가-힣]"),  # 01 바빌론, 1_제목 (30개도시로읽는세계사)
+            re.compile(r"^\d+_\s*[가-힣A-Z0-9]"),  # 1_3D, 1_제목 (3D프린터의모든것 - 영문/숫자 허용)
         ]
 
     def detect_boundaries(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -193,12 +196,22 @@ class ContentBoundaryDetector:
                 ]
             )
 
-            # 종문 키워드 확인
-            matched_keywords = [
-                keyword
-                for keyword in END_KEYWORDS
-                if keyword.lower() in footer_text.lower()
-            ]
+            # 종문 키워드 확인 (단어 단위 매칭)
+            matched_keywords = []
+            footer_lower = footer_text.lower()
+            for keyword in END_KEYWORDS:
+                keyword_lower = keyword.lower()
+                
+                # 단일 문자 키워드("주")는 단독으로만 매칭
+                if len(keyword) == 1:
+                    # 공백으로 분리된 단어들 중에 정확히 "주"가 있는지 확인
+                    words = footer_lower.split()
+                    if keyword_lower in words:
+                        matched_keywords.append(keyword)
+                else:
+                    # 다중 문자 키워드는 기존 방식 (부분 문자열 매칭)
+                    if keyword_lower in footer_lower:
+                        matched_keywords.append(keyword)
 
             if matched_keywords:
                 logger.info(

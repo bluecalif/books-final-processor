@@ -298,89 +298,99 @@ class PDFParser:
                 f"(centerline={CENTERLINE})"
             )
 
-            # 좌측 페이지 (요소가 있을 경우만)
-            if left_elements:
-                # 요소 정렬 (y0, x0 순서)
-                sorted_left = sorted(
-                    left_elements,
-                    key=lambda x: (
-                        x.get("bbox", {}).get("y0", 1.0),
-                        x.get("bbox", {}).get("x0", 0.0)
-                    ),
+            # 좌측 페이지 (항상 생성, 컨텐츠 여부와 관계없이 홀수로 고정)
+            # 요소 정렬 (y0, x0 순서)
+            sorted_left = sorted(
+                left_elements,
+                key=lambda x: (
+                    x.get("bbox", {}).get("y0", 1.0),
+                    x.get("bbox", {}).get("x0", 0.0)
+                ),
+            ) if left_elements else []
+            # raw_text 생성
+            raw_text_left = " ".join([e.get("text", "") for e in sorted_left]) if sorted_left else ""
+            
+            # 페이지 번호 매핑 기록
+            if original_page not in page_mapping:
+                page_mapping[original_page] = []
+            page_mapping[original_page].append((page_counter, "left"))
+            
+            # 중요 페이지 범위 확인 (GT 기준: 165-169, 193-197, 222-226)
+            if 165 <= page_counter <= 169 or 193 <= page_counter <= 197 or 222 <= page_counter <= 226:
+                logger.info(
+                    f"[INFO] 양면 분리 - 중요 페이지 범위: "
+                    f"원본 페이지 {original_page} → 분리 후 페이지 {page_counter} (좌측, 홀수)"
                 )
-                # raw_text 생성
-                raw_text_left = " ".join([e.get("text", "") for e in sorted_left])
-                
-                # 페이지 번호 매핑 기록
-                if original_page not in page_mapping:
-                    page_mapping[original_page] = []
-                page_mapping[original_page].append((page_counter, "left"))
-                
-                # 중요 페이지 범위 확인 (GT 기준: 165-169, 193-197, 222-226)
-                # 원본 페이지 번호로 환산: 분리 후 페이지 번호 / 2 (대략)
-                # 정확한 환산을 위해 원본 페이지 번호도 로깅
-                if 165 <= page_counter <= 169 or 193 <= page_counter <= 197 or 222 <= page_counter <= 226:
-                    logger.info(
-                        f"[INFO] 양면 분리 - 중요 페이지 범위: "
-                        f"원본 페이지 {original_page} → 분리 후 페이지 {page_counter} (좌측)"
-                    )
-                
-                result_pages.append(
-                    {
-                        "page_number": page_counter,
-                        "original_page": original_page,
-                        "side": "left",
-                        "elements": sorted_left,
-                        "raw_text": raw_text_left,
-                        "metadata": {
-                            "is_split": True,
-                            "centerline": CENTERLINE,
-                            "element_count": len(left_elements),
-                        },
-                    }
+            
+            # 빈 페이지인 경우 로그
+            if not left_elements:
+                logger.debug(
+                    f"[DEBUG] 원본 페이지 {original_page} 좌측: 빈 페이지 생성 (분리 후 페이지 {page_counter})"
                 )
-                page_counter += 1
+            
+            result_pages.append(
+                {
+                    "page_number": page_counter,
+                    "original_page": original_page,
+                    "side": "left",
+                    "elements": sorted_left,
+                    "raw_text": raw_text_left,
+                    "metadata": {
+                        "is_split": True,
+                        "centerline": CENTERLINE,
+                        "element_count": len(left_elements),
+                        "is_empty": len(left_elements) == 0,
+                    },
+                }
+            )
+            page_counter += 1  # 홀수로 유지
 
-            # 우측 페이지 (요소가 있을 경우만)
-            if right_elements:
-                # 요소 정렬 (y0, x0 순서)
-                sorted_right = sorted(
-                    right_elements,
-                    key=lambda x: (
-                        x.get("bbox", {}).get("y0", 1.0),
-                        x.get("bbox", {}).get("x0", 0.0)
-                    ),
+            # 우측 페이지 (항상 생성, 컨텐츠 여부와 관계없이 짝수로 고정)
+            # 요소 정렬 (y0, x0 순서)
+            sorted_right = sorted(
+                right_elements,
+                key=lambda x: (
+                    x.get("bbox", {}).get("y0", 1.0),
+                    x.get("bbox", {}).get("x0", 0.0)
+                ),
+            ) if right_elements else []
+            # raw_text 생성
+            raw_text_right = " ".join([e.get("text", "") for e in sorted_right]) if sorted_right else ""
+            
+            # 페이지 번호 매핑 기록
+            if original_page not in page_mapping:
+                page_mapping[original_page] = []
+            page_mapping[original_page].append((page_counter, "right"))
+            
+            # 중요 페이지 범위 확인
+            if 165 <= page_counter <= 169 or 193 <= page_counter <= 197 or 222 <= page_counter <= 226:
+                logger.info(
+                    f"[INFO] 양면 분리 - 중요 페이지 범위: "
+                    f"원본 페이지 {original_page} → 분리 후 페이지 {page_counter} (우측, 짝수)"
                 )
-                # raw_text 생성
-                raw_text_right = " ".join([e.get("text", "") for e in sorted_right])
-                
-                # 페이지 번호 매핑 기록
-                if original_page not in page_mapping:
-                    page_mapping[original_page] = []
-                page_mapping[original_page].append((page_counter, "right"))
-                
-                # 중요 페이지 범위 확인
-                if 165 <= page_counter <= 169 or 193 <= page_counter <= 197 or 222 <= page_counter <= 226:
-                    logger.info(
-                        f"[INFO] 양면 분리 - 중요 페이지 범위: "
-                        f"원본 페이지 {original_page} → 분리 후 페이지 {page_counter} (우측)"
-                    )
-                
-                result_pages.append(
-                    {
-                        "page_number": page_counter,
-                        "original_page": original_page,
-                        "side": "right",
-                        "elements": sorted_right,
-                        "raw_text": raw_text_right,
-                        "metadata": {
-                            "is_split": True,
-                            "centerline": CENTERLINE,
-                            "element_count": len(right_elements),
-                        },
-                    }
+            
+            # 빈 페이지인 경우 로그
+            if not right_elements:
+                logger.debug(
+                    f"[DEBUG] 원본 페이지 {original_page} 우측: 빈 페이지 생성 (분리 후 페이지 {page_counter})"
                 )
-                page_counter += 1
+            
+            result_pages.append(
+                {
+                    "page_number": page_counter,
+                    "original_page": original_page,
+                    "side": "right",
+                    "elements": sorted_right,
+                    "raw_text": raw_text_right,
+                    "metadata": {
+                        "is_split": True,
+                        "centerline": CENTERLINE,
+                        "element_count": len(right_elements),
+                        "is_empty": len(right_elements) == 0,
+                    },
+                }
+            )
+            page_counter += 1  # 짝수로 유지
 
         # 페이지 번호 매핑 요약 로그
         logger.info(
