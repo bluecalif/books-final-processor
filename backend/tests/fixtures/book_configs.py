@@ -82,19 +82,35 @@ def get_test_books():
     환경변수:
     - TEST_FIRST_BOOK_ONLY=1: 첫 번째 도서만 반환
     - TEST_FIRST_TWO_BOOKS=1: 첫 번째와 두 번째 도서만 반환
+    - TEST_FAILED_BOOKS_ONLY=1: 실패한 책 3권만 반환 (10년후세계사, 12가지인생의법칙, 30개도시로읽는세계사)
+    - TEST_10년후세계사_ONLY=1: 10년후세계사만 반환
+    - TEST_12가지인생의법칙_ONLY=1: 12가지인생의법칙만 반환
     - 기본값: 모든 도서 반환
 
-    우선순위: TEST_FIRST_BOOK_ONLY > TEST_FIRST_TWO_BOOKS > 기본값
+    우선순위: TEST_FIRST_BOOK_ONLY > TEST_FIRST_TWO_BOOKS > TEST_10년후세계사_ONLY > TEST_12가지인생의법칙_ONLY > TEST_FAILED_BOOKS_ONLY > 기본값
     """
     import os
 
     first_only = os.getenv("TEST_FIRST_BOOK_ONLY")
     first_two = os.getenv("TEST_FIRST_TWO_BOOKS")
+    test_10년후세계사_only = os.getenv("TEST_10년후세계사_ONLY")
+    test_12가지인생의법칙_only = os.getenv("TEST_12가지인생의법칙_ONLY")
+    failed_only = os.getenv("TEST_FAILED_BOOKS_ONLY")
 
     if first_only == "1":
         return BOOK_CONFIGS[:1]
     elif first_two == "1":
         return BOOK_CONFIGS[:2]
+    elif test_10년후세계사_only == "1":
+        # 10년후세계사만 반환
+        return [config for config in BOOK_CONFIGS if config["name"] == "10년후세계사"]
+    elif test_12가지인생의법칙_only == "1":
+        # 12가지인생의법칙만 반환
+        return [config for config in BOOK_CONFIGS if config["name"] == "12가지인생의법칙"]
+    elif failed_only == "1":
+        # 실패한 책 3권만 반환
+        failed_books = ["10년후세계사", "12가지인생의법칙", "30개도시로읽는세계사"]
+        return [config for config in BOOK_CONFIGS if config["name"] in failed_books]
     return BOOK_CONFIGS
 
 

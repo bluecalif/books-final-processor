@@ -388,17 +388,25 @@ def test_e2e_structure_analysis_for_book(e2e_client: httpx.Client, book_config: 
     log_file = setup_test_logging()
     logger = logging.getLogger(__name__)
 
-    try:
-        book_name = book_config["name"]
-        pdf_file = book_config["pdf_file"]
-        pdf_path = get_pdf_path(pdf_file)
-        ground_truth, accuracy_thresholds = get_ground_truth(
-            book_config["ground_truth_module"]
-        )
+    # 변수 초기화 (예외 처리에서 사용)
+    book_name = book_config["name"]
+    pdf_file = book_config["pdf_file"]
+    pdf_path = get_pdf_path(pdf_file)
+    ground_truth, accuracy_thresholds = get_ground_truth(
+        book_config["ground_truth_module"]
+    )
+    footer_structure = None
+    results = None
 
+    try:
         logger.info("=" * 80)
         logger.info(f"도서: {book_name}")
         logger.info("=" * 80)
+
+        # 터미널 출력: 테스트 시작
+        print(f"\n{'='*80}")
+        print(f"[테스트 시작] {book_name}")
+        print(f"{'='*80}")
 
         # 1. PDF 파일 존재 확인
         assert pdf_path.exists(), f"PDF 파일 없음: {pdf_path}"
@@ -479,10 +487,12 @@ def test_e2e_structure_analysis_for_book(e2e_client: httpx.Client, book_config: 
         logger.info("=" * 80)
 
         # 터미널 출력 (간략 요약)
-        print(f"\n[통과] {book_name}")
-        print(f"  본문 시작: {'OK' if main_start['passed'] else 'FAIL'}")
-        print(f"  챕터 개수: {'OK' if chapter_count['passed'] else 'FAIL'}")
+        print(f"\n{'='*80}")
+        print(f"[통과] {book_name}")
+        print(f"  본문 시작: {'OK' if main_start['passed'] else 'FAIL'} (예측={main_start.get('predicted')}, GT={main_start.get('ground_truth')}, 오차={main_start.get('error')}페이지)")
+        print(f"  챕터 개수: {'OK' if chapter_count['passed'] else 'FAIL'} (예측={chapter_count.get('predicted')}, GT={chapter_count.get('ground_truth')}, 오차={chapter_count.get('error')}개)")
         print(f"  챕터 시작: {passed_chapters}/{total_chapters} OK")
+        print(f"{'='*80}")
 
     except Exception as e:
         logger.error("=" * 80)
@@ -492,4 +502,30 @@ def test_e2e_structure_analysis_for_book(e2e_client: httpx.Client, book_config: 
         import traceback
 
         logger.error(f"스택 트레이스:\n{traceback.format_exc()}")
+
+        # 터미널 출력: 실패 요약
+        print(f"\n{'='*80}")
+        print(f"[실패] {book_name}")
+        
+        # 정확도 평가 결과가 있는 경우 출력
+        if results is not None:
+            main_start = results["main_start_page"]
+            chapter_count = results["chapter_count"]
+            chapter_pages = results["chapter_start_pages"]
+            passed_chapters = sum(1 for e in chapter_pages["errors"] if e["passed"])
+            total_chapters = len(chapter_pages["errors"])
+            
+            print(f"  본문 시작: {'OK' if main_start['passed'] else 'FAIL'} (예측={main_start.get('predicted')}, GT={main_start.get('ground_truth')}, 오차={main_start.get('error')}페이지)")
+            print(f"  챕터 개수: {'OK' if chapter_count['passed'] else 'FAIL'} (예측={chapter_count.get('predicted')}, GT={chapter_count.get('ground_truth')}, 오차={chapter_count.get('error')}개)")
+            print(f"  챕터 시작: {passed_chapters}/{total_chapters} OK")
+            
+            # 실패한 챕터 상세 정보
+            if not chapter_pages["passed"]:
+                failed_chapters = [e for e in chapter_pages["errors"] if not e["passed"]]
+                failed_info = [f"챕터 {e.get('chapter_number')} (GT={e.get('ground_truth')})" for e in failed_chapters]
+                print(f"  실패한 챕터: {failed_info}")
+        else:
+            print(f"  오류: {type(e).__name__}: {str(e)}")
+        
+        print(f"{'='*80}")
         raise

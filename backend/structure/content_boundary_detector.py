@@ -113,6 +113,9 @@ class ContentBoundaryDetector:
         """
         logger.info("[INFO] Detecting main content start (개선 버전: 챕터 표시 판별자 기준)...")
 
+        # 본문 시작 후보 페이지 범위 (10년후세계사: 17-27, 12가지인생의법칙: 25-45, 30개도시로읽는세계사: 15-25)
+        candidate_pages = [17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45]
+
         for page in pages:
             page_num = page.get("page_number", 0)
 
@@ -126,20 +129,101 @@ class ContentBoundaryDetector:
 
             # Footer 요소 분류
             footer_elements = self._get_footer_elements(page)
+            
+            # 본문 시작 후보 페이지 범위에 있으면 상세 로그
+            is_candidate = page_num in candidate_pages or (15 <= page_num <= 50)
+            
+            if is_candidate:
+                logger.info(f"[INFO] Page {page_num} 본문 시작 탐지 검사:")
+                logger.info(f"  - Footer 요소 개수: {len(footer_elements)}")
+                for idx, elem in enumerate(footer_elements):
+                    text = elem.get("text", "").strip()
+                    bbox = elem.get("bbox", {})
+                    x0 = bbox.get("x0", 0.5)
+                    y0 = bbox.get("y0", 0.0)
+                    classification = self._classify_footer_element(elem)
+                    has_digit = "숫자O" if re.search(r'\d+', text) else "숫자X"
+                    has_char = "문자O" if re.search(r'[가-힣a-zA-Z]', text) else "문자X"
+                    logger.info(
+                        f"  - 요소 #{idx+1}: text='{text[:80]}', "
+                        f"x0={x0:.3f}, y0={y0:.3f}, 분류={classification}, {has_digit}/{has_char}"
+                    )
+
             chapter_markers = [
                 elem
                 for elem in footer_elements
                 if self._classify_footer_element(elem) == "chapter_marker"
             ]
 
+            if is_candidate:
+                logger.info(f"  - chapter_marker 개수: {len(chapter_markers)}")
+
             # 챕터 표시가 있으면 본문 시작 후보
-            if chapter_markers:
+            # 숫자와 문자가 함께 있는 chapter_marker만 사용 (숫자만 있는 것은 제외)
+            valid_chapter_markers = []
+            for marker in chapter_markers:
+                text = marker.get("text", "").strip()
+                # 숫자와 문자가 함께 있는지 확인
+                if re.search(r'\d+', text) and re.search(r'[가-힣a-zA-Z]', text):
+                    valid_chapter_markers.append(marker)
+                    if is_candidate:
+                        logger.info(f"  - 유효한 chapter_marker 발견: text='{text[:80]}'")
+
+            if is_candidate and not valid_chapter_markers:
+                logger.info(f"  - 유효한 chapter_marker 없음 (숫자+문자 포함 필요)")
+
+            if valid_chapter_markers:
+                # 첫 번째 유효한 chapter_marker에서 숫자 추출
+                first_marker = valid_chapter_markers[0]
+                marker_text = first_marker.get("text", "").strip()
+                
+                # 10년후세계사 분석을 위한 상세 로그 (Page 19-25 주변)
+                if 19 <= page_num <= 25:
+                    logger.info(f"[상세 분석] Page {page_num} - 첫 번째 chapter_marker 분석:")
+                    logger.info(f"  - marker_text: '{marker_text}'")
+                
+                # 숫자 추출 (텍스트 시작부터 첫 번째 숫자)
+                match = re.search(r'\d+', marker_text)
+                if match:
+                    extracted_number = int(match.group())
+                    match_start = match.start()
+                    match_end = match.end()
+                    matched_text = match.group()
+                    
+                    if 19 <= page_num <= 25:
+                        logger.info(f"  - 숫자 추출 성공: '{matched_text}' (위치: {match_start}-{match_end})")
+                        logger.info(f"  - 추출된 숫자: {extracted_number}")
+                    
+                    # 첫 번째 챕터는 0 또는 1이어야 함 (1보다 큰 숫자는 제외)
+                    if extracted_number > 1:
+                        if is_candidate or (19 <= page_num <= 25):
+                            logger.info(f"  - [제외] 첫 번째 챕터가 아님 (추출된 번호: {extracted_number} > 1) → 제외")
+                        continue  # 다음 페이지로
+                    
+                    if is_candidate or (19 <= page_num <= 25):
+                        logger.info(f"  - [유효] 추출된 챕터 번호: {extracted_number} (0 또는 1) → 유효함")
+                else:
+                    if 19 <= page_num <= 25:
+                        logger.warning(f"  - [경고] 숫자 추출 실패: marker_text='{marker_text}'에서 숫자를 찾을 수 없음")
+                
                 # 서문 키워드 확인 (페이지 전체 텍스트에서)
-                if not self._has_start_keywords(page):
+                has_start_keywords = self._has_start_keywords(page)
+                if is_candidate or (19 <= page_num <= 25):
+                    logger.info(f"  - 서문 키워드 확인: {'있음' if has_start_keywords else '없음'}")
+                    if has_start_keywords:
+                        # 서문 키워드가 어디서 발견되었는지 확인
+                        page_text = page.get("raw_text", "")
+                        for keyword in START_KEYWORDS:
+                            if keyword.lower() in page_text.lower():
+                                logger.info(f"    - 발견된 키워드: '{keyword}'")
+                
+                if not has_start_keywords:
                     logger.info(
-                        f"[INFO] Main starts at page {page_num} (챕터 표시 판별자 발견)"
+                        f"[INFO] Main starts at page {page_num} (챕터 표시 판별자 발견: '{marker_text[:50]}')"
                     )
                     return page_num
+                elif is_candidate or (19 <= page_num <= 25):
+                    logger.info(f"  - 서문 키워드로 인해 제외됨")
 
         # 기본값: 3페이지부터
         logger.info("[INFO] Main starts at page 3 (기본값, 챕터 표시 판별자 없음)")
@@ -251,36 +335,55 @@ class ContentBoundaryDetector:
         bbox = elem.get("bbox", {})
         x0 = bbox.get("x0", 0.5)
 
-        # 1. 챕터 패턴 확인 (최우선)
-        if self._is_chapter_pattern(text):
-            return "chapter_marker"
+        # 상세 로그를 위한 정보 수집
+        log_info = {
+            "text": text[:50],  # 처음 50자만
+            "x0": x0,
+            "is_page_number_check": False,
+            "is_chapter_pattern_check": False,
+            "has_chapter_keywords_check": False,
+        }
 
-        # 2. 위치 기반 판단
+        # 1. 페이지 번호 확인 (우선순위 높임: 숫자만 있는 경우 먼저 확인)
         if x0 < 0.05:  # 왼쪽 끝 (페이지 번호 영역)
+            log_info["is_page_number_check"] = True
             if self._is_page_number(text):
+                logger.debug(f"[분류] page_number: text='{text}', x0={x0:.3f}")
                 return "page_number"
+
+        # 2. 챕터 패턴 확인
+        log_info["is_chapter_pattern_check"] = True
+        if self._is_chapter_pattern(text):
+            logger.debug(f"[분류] chapter_marker (패턴): text='{text}', x0={x0:.3f}")
+            return "chapter_marker"
 
         # 3. 중앙 영역 (챕터 제목 영역)
         if 0.05 < x0 < 0.5:  # 중앙
+            log_info["has_chapter_keywords_check"] = True
             if self._has_chapter_keywords(text):
+                logger.debug(f"[분류] chapter_marker (키워드): text='{text}', x0={x0:.3f}")
                 return "chapter_marker"
 
         # 4. 기타
+        logger.debug(f"[분류] other: text='{text}', x0={x0:.3f}, 체크={log_info}")
         return "other"
 
     def _is_chapter_pattern(self, text: str) -> bool:
         """
-        챕터 패턴 확인
+        챕터 패턴 확인 (개선: 숫자만 있는 경우는 제외)
 
-        패턴 예시:
-        - "제1장", "제1강", "제1부"
-        - "Chapter 1", "Part 1"
-        - "1장", "1강"
+        텍스트에 숫자와 문자가 함께 있으면 챕터 마커로 간주합니다.
+        숫자만 있는 경우는 페이지 번호일 가능성이 높으므로 제외합니다.
         """
-        for pattern in self.chapter_patterns:
-            if pattern.search(text):
-                return True
-        return False
+        # 숫자만 있는 경우는 제외 (페이지 번호일 가능성)
+        if re.match(r"^\d{1,3}$", text):
+            return False
+        
+        # 숫자와 문자가 함께 있는 경우만 챕터 마커로 간주
+        has_digit = bool(re.search(r'\d+', text))
+        has_char = bool(re.search(r'[가-힣a-zA-Z]', text))
+        
+        return has_digit and has_char
 
     def _has_chapter_keywords(self, text: str) -> bool:
         """

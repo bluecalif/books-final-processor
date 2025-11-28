@@ -99,37 +99,50 @@ class ChapterDetector:
 
     def _extract_chapter_numbers_improved(
         self, pages: List[Dict]
-    ) -> Dict[int, Optional[int]]:
+    ) -> Dict[int, tuple]:
         """
-        개선된 챕터 번호 추출 (패턴 기반)
+        개선된 챕터 번호 추출 (단순화된 로직)
 
         로직:
         1. 각 홀수 페이지의 Footer에서 챕터 표시 판별자만 추출
-        2. 챕터 패턴에서 숫자 추출
+        2. 텍스트 시작부터 첫 번째 숫자 추출
         3. 페이지 번호는 무시
 
         Args:
             pages: 본문 영역의 홀수 페이지 리스트
 
         Returns:
-            {page_number: chapter_number or None}
+            {page_number: (chapter_number or None, chapter_marker_text or None)}
         """
         page_chapter_numbers = {}
 
+        # 12가지인생의법칙 실패한 챕터 페이지 (GT 기준 ±2 페이지)
+        # 챕터 11: GT=555 (553-557) - 현재 GT 기준
+        failed_chapter_ranges = [(553, 557)]  # 챕터 11만 확인
+        
         for page in pages:
             page_num = page.get("page_number", 0)
             is_important = self._is_important_page(page_num)
+            
+            # 12가지인생의법칙 실패한 챕터 페이지 범위 확인
+            is_failed_chapter_page = any(start <= page_num <= end for start, end in failed_chapter_ranges)
 
             # Footer 영역 요소 추출
             footer_elements = self._get_footer_elements(page)
 
-            # 중요 페이지는 상세 로그
-            if is_important:
-                logger.info(f"[INFO] 중요 페이지 분석: Page {page_num} (챕터 5/6/7 시작 범위)")
+            # 중요 페이지 또는 실패한 챕터 페이지는 상세 로그
+            if is_important or is_failed_chapter_page:
+                if is_failed_chapter_page:
+                    logger.info(f"[INFO] ========================================")
+                    logger.info(f"[INFO] 실패한 챕터 페이지 상세 분석: Page {page_num} (12가지인생의법칙 챕터 11, GT=555)")
+                    logger.info(f"[INFO] ========================================")
+                else:
+                    logger.info(f"[INFO] 중요 페이지 분석: Page {page_num} (챕터 5/6/7 시작 범위)")
                 logger.info(f"  - Footer 요소 개수: {len(footer_elements)}")
 
             # 각 Footer 요소 분류 및 로깅
             chapter_markers = []
+            page_numbers = []
             for idx, elem in enumerate(footer_elements):
                 text = elem.get("text", "").strip()
                 bbox = elem.get("bbox", {})
@@ -138,41 +151,96 @@ class ChapterDetector:
 
                 if classification == "chapter_marker":
                     chapter_markers.append(elem)
+                elif classification == "page_number":
+                    page_numbers.append(elem)
 
-                # 중요 페이지는 상세 로그, 일반 페이지는 DEBUG
-                if is_important:
-                    logger.info(f"  - 요소 #{idx+1}: text='{text[:50]}', x0={x0:.3f}, 분류={classification}")
+                # 중요 페이지 또는 실패한 챕터 페이지는 상세 로그, 일반 페이지는 DEBUG
+                if is_important or is_failed_chapter_page:
+                    has_digit = "숫자O" if re.search(r'\d+', text) else "숫자X"
+                    has_char = "문자O" if re.search(r'[가-힣a-zA-Z]', text) else "문자X"
+                    logger.info(f"  - 요소 #{idx+1}: text='{text[:80]}', x0={x0:.3f}, 분류={classification}, {has_digit}/{has_char}")
                 else:
                     logger.debug(f"[DEBUG] Page {page_num} 요소 #{idx+1}: text='{text[:50]}', 분류={classification}")
 
+            # chapter_marker와 page_number 개수 로깅
+            if is_important or is_failed_chapter_page or chapter_markers:
+                logger.info(f"  - Footer 요소 요약: chapter_marker={len(chapter_markers)}개, page_number={len(page_numbers)}개")
+
             # 챕터 번호 추출
+            # 숫자와 문자가 함께 있는 chapter_marker 우선 선택
             chapter_number = None
+            chapter_marker_text = None
+            
+            # 1. 숫자와 문자가 함께 있는 marker 우선 선택
             for marker in chapter_markers:
                 text = marker.get("text", "").strip()
-                number = self._extract_chapter_number_from_pattern(text)
-                if number:
-                    chapter_number = number
-                    if is_important:
-                        logger.info(f"  - 챕터 표시 발견: text='{text}', 추출된 번호={number}")
+                # 숫자와 문자가 함께 있는지 확인
+                if re.search(r'\d+', text) and re.search(r'[가-힣a-zA-Z]', text):
+                    number = self._extract_chapter_number_from_text(text)
+                    if number:
+                        chapter_number = number
+                        chapter_marker_text = text  # 제목 추출을 위해 저장
+                        if is_important or is_failed_chapter_page:
+                            logger.info(f"  - 챕터 표시 발견 (문자 포함): text='{text[:80]}', 추출된 번호={number}")
+                        else:
+                            logger.debug(
+                                f"[DEBUG] Page {page_num}: chapter_number={chapter_number}, "
+                                f"text='{text[:50]}...' (문자 포함)"
+                            )
+                        break
+            
+            # 2. 숫자만 있는 marker는 fallback (문자 포함 marker가 없을 때만)
+            if chapter_number is None:
+                for marker in chapter_markers:
+                    text = marker.get("text", "").strip()
+                    # 숫자만 있는 경우 (페이지 번호 제외)
+                    if re.search(r'\d+', text) and not re.search(r'[가-힣a-zA-Z]', text):
+                        # 페이지 번호가 아닌 경우만 (위치 확인)
+                        bbox = marker.get("bbox", {})
+                        x0 = bbox.get("x0", 0.5)
+                        if x0 >= 0.05:  # 왼쪽 끝이 아니면
+                            number = self._extract_chapter_number_from_text(text)
+                            if number:
+                                chapter_number = number
+                                chapter_marker_text = text
+                                if is_important or is_failed_chapter_page:
+                                    logger.info(f"  - 챕터 표시 발견 (숫자만, fallback): text='{text[:80]}', 추출된 번호={number}")
+                                else:
+                                    logger.debug(
+                                        f"[DEBUG] Page {page_num}: chapter_number={chapter_number}, "
+                                        f"text='{text[:50]}...' (숫자만, fallback)"
+                                    )
+                                break
+
+            # chapter_marker 텍스트를 저장 (나중에 제목 추출에 사용)
+            page_chapter_numbers[page_num] = (chapter_number, chapter_marker_text)
+
+            # 중요 페이지 또는 실패한 챕터 페이지는 최종 결과도 INFO 레벨로
+            if is_important or is_failed_chapter_page:
+                if is_failed_chapter_page:
+                    logger.info(f"[INFO] ========================================")
+                    if chapter_number is None:
+                        logger.warning(f"  - [경고] 최종 챕터 번호: None (챕터 마커를 찾지 못함)")
+                        logger.warning(f"  - [원인 분석] Page {page_num}에서 챕터 11을 찾지 못함")
                     else:
-                        logger.debug(
-                            f"[DEBUG] Page {page_num}: chapter_number={chapter_number}, "
-                            f"text='{text[:50]}...'"
-                        )
-                    break
-
-            page_chapter_numbers[page_num] = chapter_number
-
-            # 중요 페이지는 최종 결과도 INFO 레벨로
-            if is_important:
-                logger.info(f"  - 최종 챕터 번호: {chapter_number}")
+                        logger.info(f"  - 최종 챕터 번호: {chapter_number}")
+                        if chapter_number == 11:
+                            logger.info(f"  - [성공] 챕터 11 발견! Page {page_num}")
+                        else:
+                            logger.warning(f"  - [경고] 챕터 11이 아님 (발견된 번호: {chapter_number})")
+                    logger.info(f"[INFO] ========================================")
+                else:
+                    if chapter_number is None:
+                        logger.warning(f"  - [경고] 최종 챕터 번호: None (챕터 마커를 찾지 못함)")
+                    else:
+                        logger.info(f"  - 최종 챕터 번호: {chapter_number}")
             elif chapter_number is None:
                 logger.debug(
                     f"[DEBUG] Page {page_num}: no chapter number found in footer"
                 )
 
         # 전체 요약
-        extracted_count = len([n for n in page_chapter_numbers.values() if n])
+        extracted_count = len([n for n, _ in page_chapter_numbers.values() if n is not None])
         logger.info(
             f"[INFO] 추출된 챕터 번호: {extracted_count}개 페이지"
         )
@@ -180,7 +248,7 @@ class ChapterDetector:
         # 중요 페이지 범위의 최종 결과 요약
         for start, end in self.important_page_ranges:
             pages_in_range = [p for p in range(start, end + 1) if p in page_chapter_numbers]
-            numbers_in_range = [page_chapter_numbers[p] for p in pages_in_range if page_chapter_numbers[p] is not None]
+            numbers_in_range = [page_chapter_numbers[p][0] for p in pages_in_range if page_chapter_numbers[p][0] is not None]
             if numbers_in_range:
                 logger.info(f"[INFO] 중요 페이지 범위 {start}-{end}: 챕터 번호 {numbers_in_range}")
             else:
@@ -201,14 +269,17 @@ class ChapterDetector:
         bbox = elem.get("bbox", {})
         x0 = bbox.get("x0", 0.5)
 
-        # 1. 챕터 패턴 확인 (최우선)
-        if self._is_chapter_pattern(text):
-            return "chapter_marker"
-
-        # 2. 위치 기반 판단
+        # 1. 페이지 번호 확인 (최우선: 숫자만 있고 왼쪽 끝에 위치)
         if x0 < 0.05:  # 왼쪽 끝 (페이지 번호 영역)
             if self._is_page_number(text):
                 return "page_number"
+
+        # 2. 챕터 패턴 확인 (숫자 포함 + 문자 포함)
+        # 숫자만 있는 것은 제외 (페이지 번호로 이미 처리됨)
+        if self._is_chapter_pattern(text) and not self._is_page_number(text):
+            # 숫자와 문자가 함께 있는 경우만 chapter_marker
+            if re.search(r'[가-힣a-zA-Z]', text):  # 한글 또는 영문 포함
+                return "chapter_marker"
 
         # 3. 중앙 영역 (챕터 제목 영역)
         if 0.05 < x0 < 0.5:  # 중앙
@@ -220,23 +291,22 @@ class ChapterDetector:
 
     def _is_chapter_pattern(self, text: str) -> bool:
         """
-        챕터 패턴 확인
+        챕터 패턴 확인 (단순화: 숫자 포함 여부만 확인)
 
-        패턴 예시:
-        - "제1장", "제1강", "제1부"
-        - "Chapter 1", "Part 1"
-        - "1장", "1강"
+        텍스트에 숫자가 포함되어 있으면 챕터 마커로 간주합니다.
         """
-        for pattern in self.chapter_patterns:
-            if pattern.search(text):
-                return True
-        return False
+        # 텍스트에 숫자가 포함되어 있는지 확인
+        return bool(re.search(r'\d+', text))
 
-    def _extract_chapter_number_from_pattern(self, text: str) -> Optional[int]:
+    def _extract_chapter_number_from_text(self, text: str) -> Optional[int]:
         """
-        챕터 패턴에서 숫자 추출
+        텍스트에서 첫 번째 숫자 추출 (단순화된 로직)
 
-        예: "제1장" -> 1, "Chapter 2" -> 2
+        로직:
+        1. 텍스트 시작부터 첫 번째 숫자 찾기
+        2. 01, 02 형식 포함하여 정수로 변환
+
+        예: "[c]4_실전!" -> 4, "01_바빌론" -> 1, "12가지 인생의 법칙" -> 12
 
         Args:
             text: 텍스트
@@ -244,21 +314,18 @@ class ChapterDetector:
         Returns:
             추출된 챕터 번호 또는 None
         """
-        for pattern in self.chapter_patterns:
-            match = pattern.search(text)
-            if match:
-                # 그룹에서 숫자 추출
-                groups = match.groups()
-                if groups:
-                    try:
-                        number = int(groups[0])
-                        if number >= 1:
-                            logger.debug(f"[DEBUG] 챕터 패턴 매칭: text='{text[:50]}', 패턴={pattern.pattern}, 추출된 번호={number}")
-                            return number
-                    except (ValueError, IndexError):
-                        continue
+        # 텍스트 시작부터 첫 번째 숫자 찾기
+        match = re.search(r'\d+', text)
+        if match:
+            try:
+                number = int(match.group())  # 01, 02 형식도 정수로 변환
+                if number >= 1:
+                    logger.debug(f"[DEBUG] 숫자 추출: text='{text[:50]}', 추출된 번호={number}")
+                    return number
+            except (ValueError, IndexError):
+                pass
 
-        logger.debug(f"[DEBUG] 챕터 패턴 매칭 실패: text='{text[:50]}'")
+        logger.debug(f"[DEBUG] 숫자 추출 실패: text='{text[:50]}'")
         return None
 
     def _has_chapter_keywords(self, text: str) -> bool:
@@ -293,8 +360,8 @@ class ChapterDetector:
         return False
 
     def _filter_valid_chapter_numbers(
-        self, page_chapter_numbers: Dict[int, Optional[int]]
-    ) -> Dict[int, Optional[int]]:
+        self, page_chapter_numbers: Dict[int, tuple]
+    ) -> Dict[int, tuple]:
         """
         유효한 챕터 번호만 필터링
 
@@ -304,13 +371,13 @@ class ChapterDetector:
         3. 비연속/비정상 번호 제외
 
         Args:
-            page_chapter_numbers: {page_number: chapter_number or None}
+            page_chapter_numbers: {page_number: (chapter_number or None, chapter_marker_text or None)}
 
         Returns:
-            필터링된 {page_number: chapter_number or None}
+            필터링된 {page_number: (chapter_number or None, chapter_marker_text or None)}
         """
         # 모든 챕터 번호 수집
-        all_numbers = [n for n in page_chapter_numbers.values() if n is not None]
+        all_numbers = [n for n, _ in page_chapter_numbers.values() if n is not None]
 
         if not all_numbers:
             logger.info("[INFO] 연속성 필터링: 추출된 챕터 번호 없음")
@@ -319,7 +386,16 @@ class ChapterDetector:
         # 필터링 전 상태
         logger.info(f"[INFO] 연속성 필터링 시작:")
         logger.info(f"  - 필터링 전 챕터 번호: {sorted(set(all_numbers))}")
-        logger.info(f"  - 페이지별 챕터 번호: {[(p, n) for p, n in sorted(page_chapter_numbers.items()) if n is not None]}")
+        logger.info(f"  - 필터링 전 챕터 개수: {len(set(all_numbers))}개")
+        logger.info(f"  - 페이지별 챕터 번호: {[(p, n) for p, (n, _) in sorted(page_chapter_numbers.items()) if n is not None]}")
+        
+        # 12가지인생의법칙 실패한 챕터 번호 확인 (챕터 11만)
+        failed_chapter_numbers = [11]
+        failed_in_all = [n for n in failed_chapter_numbers if n in all_numbers]
+        if failed_in_all:
+            logger.info(f"  - [12가지인생의법칙] 실패한 챕터 번호 중 필터링 전 존재: {failed_in_all}")
+        else:
+            logger.warning(f"  - [12가지인생의법칙] 실패한 챕터 번호(11)가 필터링 전에도 없음")
 
         # 가장 긴 연속 시퀀스 찾기
         valid_numbers = self._find_continuous_sequence(all_numbers)
@@ -327,13 +403,33 @@ class ChapterDetector:
         # 필터링 후 상태
         excluded_numbers = set(all_numbers) - valid_numbers
         logger.info(f"  - 필터링 후 유효한 챕터 번호: {sorted(valid_numbers)}")
+        logger.info(f"  - 필터링 후 챕터 개수: {len(valid_numbers)}개")
         if excluded_numbers:
             logger.info(f"  - 제외된 챕터 번호: {sorted(excluded_numbers)}")
+            logger.info(f"  - 제외된 챕터 개수: {len(excluded_numbers)}개")
+        
+        # 12가지인생의법칙 실패한 챕터 번호가 필터링에서 제외되었는지 확인
+        failed_excluded = [n for n in failed_chapter_numbers if n in excluded_numbers]
+        failed_valid = [n for n in failed_chapter_numbers if n in valid_numbers]
+        if failed_excluded:
+            logger.warning(f"  - [12가지인생의법칙] 챕터 11이 필터링에서 제외됨: {failed_excluded}")
+            # 챕터 11이 제외된 이유 상세 분석
+            if 11 in all_numbers:
+                logger.warning(f"    - 챕터 11은 추출되었으나 연속성 필터링에서 제외됨")
+                # 챕터 11이 있는 페이지 찾기
+                pages_with_11 = [p for p, (n, _) in page_chapter_numbers.items() if n == 11]
+                if pages_with_11:
+                    logger.warning(f"    - 챕터 11이 추출된 페이지: {pages_with_11}")
+                    for p in pages_with_11:
+                        marker_text = page_chapter_numbers[p][1]
+                        logger.warning(f"      - Page {p}: marker_text='{marker_text}'")
+        if failed_valid:
+            logger.info(f"  - [12가지인생의법칙] 챕터 11이 필터링 후 유효함: {failed_valid}")
 
         # 중요 페이지 범위의 챕터 번호가 제외되었는지 확인
         for start, end in self.important_page_ranges:
             pages_in_range = [p for p in range(start, end + 1) if p in page_chapter_numbers]
-            numbers_in_range = [page_chapter_numbers[p] for p in pages_in_range if page_chapter_numbers[p] is not None]
+            numbers_in_range = [page_chapter_numbers[p][0] for p in pages_in_range if page_chapter_numbers[p][0] is not None]
             excluded_in_range = [n for n in numbers_in_range if n not in valid_numbers]
             if excluded_in_range:
                 logger.warning(f"[WARNING] 중요 페이지 범위 {start}-{end}: 제외된 챕터 번호 {excluded_in_range}")
@@ -342,11 +438,11 @@ class ChapterDetector:
 
         # 유효한 번호만 유지
         filtered = {}
-        for page_num, chapter_num in page_chapter_numbers.items():
+        for page_num, (chapter_num, marker_text) in page_chapter_numbers.items():
             if chapter_num in valid_numbers:
-                filtered[page_num] = chapter_num
+                filtered[page_num] = (chapter_num, marker_text)
             else:
-                filtered[page_num] = None
+                filtered[page_num] = (None, marker_text)
                 if chapter_num is not None:
                     logger.debug(
                         f"[DEBUG] Page {page_num}: chapter {chapter_num} filtered out (not in continuous sequence)"
@@ -433,27 +529,28 @@ class ChapterDetector:
         return footer_elements
 
     def _detect_chapter_boundaries(
-        self, page_chapter_numbers: Dict[int, Optional[int]], main_pages: List[int]
+        self, page_chapter_numbers: Dict[int, tuple], main_pages: List[int]
     ) -> List[Dict[str, Any]]:
         """
         챕터 경계 탐지 (숫자 변경 지점)
 
         Args:
-            page_chapter_numbers: {page_number: chapter_number or None}
+            page_chapter_numbers: {page_number: (chapter_number or None, chapter_marker_text or None)}
             main_pages: 본문 페이지 목록
 
         Returns:
-            챕터 리스트
+            챕터 리스트 (chapter_marker_text 포함)
         """
         chapters = []
         current_chapter = None
         current_start_page = None
+        current_marker_text = None
 
         # 페이지 번호 순서대로 정렬
         sorted_pages = sorted(page_chapter_numbers.keys())
 
         for page_num in sorted_pages:
-            chapter_number = page_chapter_numbers[page_num]
+            chapter_number, marker_text = page_chapter_numbers[page_num]
 
             if chapter_number is None:
                 # 숫자가 없으면 현재 챕터에 포함
@@ -472,12 +569,14 @@ class ChapterDetector:
                             "end_page": page_num - 1,  # 다음 챕터 시작 전까지
                             "score": 100.0,  # Footer 기반이므로 높은 신뢰도
                             "detection_method": "footer_pattern",
+                            "marker_text": current_marker_text,  # 제목 추출을 위해 저장
                         }
                     )
 
                 # 새 챕터 시작
                 current_chapter = chapter_number
                 current_start_page = page_num
+                current_marker_text = marker_text
 
         # 마지막 챕터 종료
         if current_chapter is not None:
@@ -490,6 +589,7 @@ class ChapterDetector:
                     "end_page": main_pages[-1] if main_pages else current_start_page,
                     "score": 100.0,
                     "detection_method": "footer_pattern",
+                    "marker_text": current_marker_text,  # 제목 추출을 위해 저장
                 }
             )
 
@@ -547,35 +647,96 @@ class ChapterDetector:
         self, chapters: List[Dict], all_pages: List[Dict]
     ) -> List[Dict]:
         """
-        챕터 제목 추출 (페이지 상단 요소에서)
+        챕터 제목 추출 (chapter_marker에서 직접 추출)
 
         Args:
-            chapters: 챕터 리스트
+            chapters: 챕터 리스트 (marker_text 포함)
             all_pages: 전체 페이지 리스트
 
         Returns:
             제목이 추가된 챕터 리스트
         """
         for ch in chapters:
-            start_page = ch["start_page"]
+            # 1. chapter_marker에서 직접 제목 추출 (우선)
+            marker_text = ch.get("marker_text")
+            if marker_text:
+                title = self._extract_chapter_title_from_marker(marker_text)
+                if title:
+                    ch["title"] = title
+                    logger.debug(f"[DEBUG] Chapter {ch['number']} title from marker: '{title}'")
+                    continue
 
-            # 시작 페이지 찾기
+            # 2. 제목이 없으면 페이지 상단 요소에서 추출 (fallback)
+            start_page = ch["start_page"]
             page_obj = None
             for p in all_pages:
                 if p.get("page_number") == start_page:
                     page_obj = p
                     break
 
-            if not page_obj:
-                continue
-
-            # 페이지 상단 요소에서 제목 추출
-            title = self._extract_title_from_page_top(page_obj)
-            if title:
-                ch["title"] = title
-                logger.debug(f"[DEBUG] Chapter {ch['number']} title: '{title}'")
+            if page_obj:
+                title = self._extract_title_from_page_top(page_obj)
+                if title:
+                    ch["title"] = title
+                    logger.debug(f"[DEBUG] Chapter {ch['number']} title from page top: '{title}'")
 
         return chapters
+
+    def _extract_chapter_title_from_marker(self, text: str) -> Optional[str]:
+        """
+        chapter_marker 텍스트에서 제목 추출
+
+        로직:
+        1. 텍스트 시작부터 첫 번째 숫자 찾기
+        2. 숫자 뒤의 단위 문자들 제거 (장, 강, 부, Chapter, Part 등)
+        3. 특수문자 및 공백 제거 (], [, -, _, 공백 등)
+        4. 일반 문자(한글/영문/숫자) 시작 부분부터 제목으로 사용
+
+        예:
+        - "[5장] 인간의 조건" -> "인간의 조건"
+        - "4_실전!" -> "실전!"
+        - "01_바빌론" -> "바빌론"
+        - "12가지 인생의 법칙" -> "가지 인생의 법칙"
+
+        Args:
+            text: chapter_marker 텍스트
+
+        Returns:
+            추출된 제목 또는 None
+        """
+        if not text:
+            return None
+
+        # 1. 텍스트 시작부터 첫 번째 숫자 찾기
+        match = re.search(r'\d+', text)
+        if not match:
+            return None
+
+        # 숫자 끝 위치
+        number_end = match.end()
+
+        # 2. 숫자 뒤의 텍스트 추출
+        remaining_text = text[number_end:]
+
+        # 3. 단위 문자들 제거 (장, 강, 부, Chapter, Part 등)
+        # 단위 패턴: 한글 단위(장, 강, 부) 또는 영문 단위(Chapter, Part)
+        unit_pattern = r'\s*[장강부]|chapter|part'
+        remaining_text = re.sub(unit_pattern, '', remaining_text, flags=re.IGNORECASE)
+
+        # 4. 특수문자 및 공백 제거 (], [, -, _, 공백 등)
+        # 단, 일반 문자(한글/영문/숫자)는 유지
+        remaining_text = re.sub(r'[^\w가-힣]', '', remaining_text)
+
+        # 5. 일반 문자 시작 부분 찾기
+        # 한글, 영문, 숫자로 시작하는 부분부터 제목으로 사용
+        match = re.search(r'[가-힣a-zA-Z0-9]', remaining_text)
+        if match:
+            title = remaining_text[match.start():]
+            if title:
+                logger.debug(f"[DEBUG] 제목 추출: 원본='{text[:50]}', 추출='{title}'")
+                return title
+
+        return None
 
     def _extract_title_from_page_top(self, page: Dict) -> Optional[str]:
         """
