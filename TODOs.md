@@ -20,7 +20,7 @@
 |-------|------|-------|------|
 | Phase 1 | 프로젝트 기초 및 환경 설정 | 100% | 완료 |
 | Phase 2 | PDF 파싱 모듈 (Upstage API 연동) | 100% | **완료** (핵심 기능 완료, 병렬 처리 구현 완료) |
-| Phase 3 | 구조 분석 모듈 | 95% | **진행 중** (Footer 기반 휴리스틱 구조 분석 완료, E2E 테스트 통과율 100% 달성, 3.8 도서 텍스트 파일 정리 진행 예정) |
+| Phase 3 | 구조 분석 모듈 | 98% | **진행 중** (Footer 기반 휴리스틱 구조 분석 완료, E2E 테스트 통과율 100% 달성, 3.8 도서 텍스트 파일 정리 구현 완료, 테스트 진행 예정) |
 | Phase 4 | 요약 모듈 | 0% | 미시작 |
 | Phase 5 | 프론트엔드 (Next.js) | 0% | 미시작 |
 | Phase 6 | 통합 및 테스트 | 0% | 미시작 |
@@ -408,7 +408,7 @@ frontend/
 
 ### Phase 3: 구조 분석 모듈
 
-**✅ 현재 상태**: **진행 중 (95%)** - Footer 기반 구조 분석 구현 완료, E2E 테스트 통과 (10개 도서 모두 통과, 통과율 100%), 3.8 도서 텍스트 파일 정리 진행 예정
+**✅ 현재 상태**: **진행 중 (98%)** - Footer 기반 구조 분석 구현 완료, E2E 테스트 통과 (10개 도서 모두 통과, 통과율 100%), 3.8 도서 텍스트 파일 정리 구현 완료 (테스트 진행 예정)
 
 **⚠️ 핵심 원칙** (참고: `docs/structure_analysis_logic_explanation_v2.md`):
 1. **Footer 기반 판단**: 모든 구조 판단은 Footer의 구조 판별자를 기준으로 수행
@@ -652,18 +652,18 @@ frontend/
 
 **⚠️ Git 주의사항**: 작업 전 `git status`, `git pull origin main` 확인 / 작업 후 `git add .`, `git commit`, `git push origin main` 실행
 
-- [ ] **Git 작업 전**: `git status` → `git pull origin main` 확인
-- [ ] `backend/structure/text_organizer.py` 생성
-  - `TextOrganizer` 클래스
-  - `organize_text(book_id, structure_data, parsed_data)`: 본문 텍스트 정리
+- [x] **Git 작업 전**: `git status` → `git pull origin main` 확인 ✅ 완료
+- [x] `backend/structure/text_organizer.py` 생성 ✅ 완료
+  - `TextOrganizer` 클래스 ✅ 완료
+  - `organize_text(book_id, structure_data, pdf_path, book_title)`: 본문 텍스트 정리 ✅ 완료
     - **입력 데이터**:
-      - 구조 분석 결과: `data/output/structure/{book_id}_structure.json` (또는 DB의 `Book.structure_data`)
-      - 파싱 결과: 캐시된 JSON (`data/cache/upstage/{hash}.json`) - `use_cache=True`로 로드
-    - **본문 영역만 추출**: `main_start_page` ~ `main_end_page` 범위의 페이지만 사용
+      - 구조 분석 결과: `data/output/structure/{해시}_{제목}_structure.json` 또는 DB의 `Book.structure_data` ✅ 완료
+      - 파싱 결과: 캐시된 JSON (`data/cache/upstage/{hash}.json`) - `use_cache=True`로 로드 ✅ 완료
+    - **본문 영역만 추출**: `main_start_page` ~ `main_end_page` 범위의 페이지만 사용 ✅ 완료
     - **챕터별 텍스트 정리**:
-      - 각 챕터의 `start_page` ~ `end_page` 범위의 페이지 텍스트 추출
-      - 페이지 번호와 함께 텍스트를 JSON 구조로 정리
-    - **출력 JSON 형식**:
+      - 각 챕터의 `start_page` ~ `end_page` 범위의 페이지 텍스트 추출 ✅ 완료
+      - 페이지 번호와 함께 텍스트를 JSON 구조로 정리 ✅ 완료
+    - **출력 JSON 형식**: ✅ 완료
       ```json
       {
         "book_id": 165,
@@ -686,10 +686,6 @@ frontend/
                 {
                   "page_number": 37,
                   "text": "페이지 37의 전체 텍스트..."
-                },
-                {
-                  "page_number": 38,
-                  "text": "페이지 38의 전체 텍스트..."
                 }
               ]
             }
@@ -701,25 +697,25 @@ frontend/
         }
       }
       ```
-    - **저장 위치**: `data/output/text/{book_id}_text.json`
-    - **확장 가능성**: `summaries` 섹션은 Phase 4에서 요약 추가 시 업데이트
-- [ ] `backend/api/services/text_organizer_service.py` 생성 (선택)
-  - `TextOrganizerService` 클래스
-  - `organize_book_text(book_id)`: 책 텍스트 정리 서비스
-    - 구조 분석 결과 가져오기 (DB 또는 JSON 파일)
-    - 캐시된 파싱 결과 로드 (`use_cache=True`)
-    - `TextOrganizer.organize_text()` 호출
-    - 정리된 텍스트 JSON 파일 저장
-- [ ] **텍스트 정리 API 엔드포인트** (선택):
-  - `GET /api/books/{id}/text`: 정리된 텍스트 JSON 파일 반환
-  - `POST /api/books/{id}/text/organize`: 텍스트 정리 실행 (백그라운드 작업)
+    - **저장 위치**: `data/output/text/{해시6글자}_{책제목10글자}_text.json` ✅ 완료
+    - **확장 가능성**: `summaries` 섹션은 Phase 4에서 요약 추가 시 업데이트 ✅ 완료
+- [x] `backend/api/services/text_organizer_service.py` 생성 ✅ 완료
+  - `TextOrganizerService` 클래스 ✅ 완료
+  - `organize_book_text(book_id)`: 책 텍스트 정리 서비스 ✅ 완료
+    - 구조 분석 결과 가져오기 (DB 또는 JSON 파일) ✅ 완료
+    - 캐시된 파싱 결과 로드 (`use_cache=True`) ✅ 완료
+    - `TextOrganizer.organize_text()` 호출 ✅ 완료
+    - 정리된 텍스트 JSON 파일 저장 ✅ 완료
+- [x] **텍스트 정리 API 엔드포인트** ✅ 완료:
+  - `GET /api/books/{id}/text`: 정리된 텍스트 JSON 파일 반환 ✅ 완료
+  - `POST /api/books/{id}/text/organize`: 텍스트 정리 실행 (백그라운드 작업) ✅ 완료
 - [ ] **테스트**:
   - 구조 분석 완료된 책에 대해 텍스트 정리 실행
   - 출력 JSON 파일 형식 검증 (메타 데이터, 챕터 구조, 페이지별 텍스트)
   - 본문 영역만 포함되는지 확인 (서문/종문 제외)
   - 챕터별 텍스트가 올바르게 분리되는지 확인
   - JSON 스키마 검증 (Pydantic 모델 사용)
-- [ ] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] 도서 텍스트 파일 정리 모듈 구현 완료 (JSON 형식)"` → `git push origin main`
+- [x] **Git 커밋**: `git add .` → `git commit -m "[Phase 3] 도서 텍스트 파일 정리 모듈 구현 완료 (JSON 형식)"` → `git push origin main` ✅ 완료
 
 **⚠️ 중요 사항**:
 - 캐시된 파싱 결과 사용 필수 (`use_cache=True`)
