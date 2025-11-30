@@ -315,7 +315,11 @@ class ExtractionService:
         chapter_schema_class = get_chapter_schema_class(domain)
 
         # 5. 각 챕터 구조화
+        import time as time_module
+        structuring_start_time = time_module.time()
         structured_count = 0
+        total_chapters = len(chapters)
+        
         for chapter in chapters:
             # 챕터의 페이지 범위 확인
             chapter_pages = list(range(chapter.start_page, chapter.end_page + 1))
