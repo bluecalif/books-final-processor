@@ -125,13 +125,12 @@
   - `create_book()`에서 category 필드 처리 추가
 
 #### 4.1.2 캐시 메타데이터 확장
-- [ ] `backend/parsers/cache_manager.py` 수정
-  - 캐시 JSON 파일에 `metadata.category` 필드 추가
-  - `save_cache()` 메서드에서 category 정보 저장
-  - `get_cached_result()` 메서드에서 category 정보 로드
-- [ ] `backend/scripts/migrate_cache_category.py` 생성
+- [x] `backend/parsers/cache_manager.py` 수정 ✅ 완료
+  - `save_cache()` 메서드에 `category` 파라미터 추가 (Optional)
+  - `_cache_meta`에 `category` 필드 저장
+- [x] `backend/scripts/migrate_cache_category.py` 생성 ✅ 완료
   - 기존 캐시 파일에 분야 정보 추가 (마이그레이션 스크립트)
-  - CSV 파일과 캐시 파일을 매칭하여 분야 정보 추가
+  - DB의 Book 레코드와 캐시 파일의 pdf_path 매칭하여 분야 정보 추가
 
 **Git 커밋**: `git add .` → `git commit -m "[Phase 4] 분야 태그 시스템 구현 (Book 모델 확장, 캐시 메타데이터 확장)"` → `git push origin main`
 

@@ -164,13 +164,14 @@ class CacheManager:
             logger.debug(f"[DEBUG] Traceback: {traceback.format_exc()}")
             return None
 
-    def save_cache(self, pdf_path: str, result: Dict[str, Any]) -> None:
+    def save_cache(self, pdf_path: str, result: Dict[str, Any], category: Optional[str] = None) -> None:
         """
         결과를 캐시에 저장
         
         Args:
             pdf_path: PDF 파일 경로
             result: 캐시할 결과 (Upstage API 원본 응답)
+            category: 분야 (선택, 예: 역사/사회, 경제/경영 등)
         """
         import traceback
         
@@ -219,8 +220,11 @@ class CacheManager:
                 "file_size": stat.st_size,
                 "file_mtime": stat.st_mtime,
                 "cached_at": time.time(),
-                "pdf_path": str(pdf_path)
+                "pdf_path": str(pdf_path),
             }
+            # 분야 정보 추가 (있는 경우)
+            if category:
+                cache_meta["category"] = category
             
             logger.info(f"[CACHE_SAVE] 메타데이터 생성 완료: file_hash={file_hash[:8]}..., file_size={stat.st_size}, file_mtime={stat.st_mtime}")
             
