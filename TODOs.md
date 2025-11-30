@@ -15,7 +15,7 @@
 
 ## 프로젝트 현재 상황
 
-### 전체 진행률: 약 85% (Phase 1, Phase 2, Phase 3, Phase 4 완료, Phase 5 진행 예정)
+### 전체 진행률: 약 87% (Phase 1, Phase 2, Phase 3, Phase 4 완료, Phase 5 85% 진행 중)
 
 | Phase | 제목 | 진행률 | 상태 |
 |-------|------|-------|------|
@@ -23,7 +23,7 @@
 | Phase 2 | PDF 파싱 모듈 (Upstage API 연동) | 100% | 완료 |
 | Phase 3 | 구조 분석 모듈 | 100% | 완료 |
 | Phase 4 | 대량 도서 처리 프레임 단계 | 100% | 완료 |
-| Phase 5 | 내용 추출 및 요약 모듈 | 0% | 미시작 |
+| Phase 5 | 내용 추출 및 요약 모듈 | 85% | 진행 중 (5.8 테스트 단계) |
 | Phase 6 | 통합 및 테스트 | 0% | 미시작 |
 
 ## Git 저장소 정보
@@ -396,6 +396,81 @@
   - `backend/summarizers/llm_chains.py`
   - `backend/utils/token_counter.py`
   - `backend/api/services/extraction_service.py`
+
+**⚠️ 현재 진행 상황 (2025-11-30)**:
+
+**해결 완료된 사항**:
+1. ✅ **OpenAI Structured Output 스키마 오류 수정 완료**
+   - 문제: OpenAI API가 `additionalProperties: false`와 모든 필드를 `required` 배열에 포함하도록 요구
+   - 해결: `backend/summarizers/llm_chains.py`에 `_add_additional_properties_false()` 함수 추가
+     - 모든 객체 타입에 `additionalProperties: false` 추가
+     - 모든 `properties` 키를 `required` 배열에 포함
+   - 검증: 스키마 수정 후 OpenAI API 호출 성공 (HTTP 200 OK)
+
+2. ✅ **API 응답 정상 확인**
+   - OpenAI API 호출: 모두 성공 (HTTP 200 OK)
+   - 구조화된 데이터 생성: 정상 작동
+   - 캐시 저장: 정상 작동 (`Cached page extraction result` 로그 확인)
+   - Pydantic 모델 검증: `model_validate_json()` 통과
+
+3. ✅ **병렬 처리 구현 완료**
+   - `ThreadPoolExecutor` 사용 (max_workers=5)
+   - 진행 상황 로깅: 10페이지당 출력
+   - 주기적 커밋: 20페이지당 DB 커밋
+
+**현재 진행 중인 작업**:
+- **테스트 실행 중**: Book ID 176 (1000년, 역사/사회 도메인)
+- **진행률**: 약 36% (140/388 페이지 완료, 로그 기준 23:29:17)
+- **예상 남은 시간**: 약 6분 (평균 1.4초/페이지)
+- **테스트 타임아웃**: 1800초 (30분) - 충분함
+
+**확인된 문제점**:
+1. ⚠️ **최종 완료 로그 부재**
+   - `EXTRACTION_COMPLETE` 로그가 보이지 않음
+   - `OUTPUT_VALIDATION` 로그가 보이지 않음
+   - 추출이 완료되었는지, DB 저장이 완료되었는지 확인 필요
+
+2. ⚠️ **테스트 타임아웃 가능성**
+   - 테스트가 30분 타임아웃으로 설정되어 있으나, 실제로는 완료 전에 타임아웃될 수 있음
+   - 서버 로그에서 추출이 완료되었는지 확인 필요
+
+**내일 시작할 때 해야 할 일**:
+
+1. **서버 로그 확인** (최우선):
+   ```powershell
+   # 최신 서버 로그 확인
+   Get-ChildItem -Path "data\test_results" -Filter "server_*.log" | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object { Get-Content $_.FullName -Tail 100 -Encoding UTF8 }
+   ```
+   - `EXTRACTION_COMPLETE` 로그 확인
+   - `OUTPUT_VALIDATION` 로그 확인
+   - 최종 상태 확인 (완료 여부, 에러 여부)
+
+2. **DB 상태 확인**:
+   ```powershell
+   poetry run python -c "from backend.api.database import SessionLocal; from backend.api.models.book import Book, PageSummary; db = SessionLocal(); book = db.query(Book).filter(Book.id == 176).first(); page_count = db.query(PageSummary).filter(PageSummary.book_id == 176).count(); print(f'Book 176 status: {book.status}'); print(f'PageSummaries count: {page_count}'); db.close()"
+   ```
+   - Book 176의 상태 확인 (`page_summarized` 또는 `error_summarizing`)
+   - PageSummary 레코드 수 확인 (예상: 388개)
+   - `structured_data` 필드에 데이터가 저장되었는지 확인
+
+3. **추출 완료 여부 확인**:
+   - 추출이 완료되었다면: 챕터 구조화 테스트 진행
+   - 추출이 미완료되었다면: 백그라운드 작업이 계속 실행 중인지 확인
+   - 추출이 실패했다면: 에러 로그 확인 및 재시도
+
+4. **문제 해결 방안**:
+   - **타임아웃 문제**: 테스트 타임아웃을 늘리거나, 백그라운드 작업 완료를 더 정확하게 감지
+   - **완료 로그 부재**: `extraction_service.py`의 최종 로그가 출력되는지 확인
+   - **DB 저장 실패**: DB 커밋이 제대로 되었는지 확인
+
+5. **테스트 재실행** (필요시):
+   - 추출이 완료되지 않았다면 테스트 재실행
+   - 또는 API를 직접 호출하여 추출 완료 대기
+
+**참고 파일**:
+- 서버 로그: `data/test_results/server_*.log`
+- 테스트 로그: `data/test_results/extraction_test_*.log`
+- 토큰 통계: `data/output/token_stats/book_176_tokens.json` (생성 여부 확인)
 
 **검증**: E2E 테스트 통과 (⚠️ 실제 서버 실행, 실제 LLM 연동, 실제 엔티티 추출, Mock 사용 금지)
 
