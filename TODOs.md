@@ -263,7 +263,7 @@
   - `PageSummaryResponse`, `ChapterSummaryResponse`에 `structured_data` 필드 추가
 
 #### 5.2 도메인 스키마 정의
-- [ ] `backend/summarizers/schemas.py` 생성
+- [x] `backend/summarizers/schemas.py` 생성 ✅ 완료
   - `BasePageSchema` (Pydantic): 공통 필드 정의
     - `page_summary: str` (2~4문장)
     - `page_function_tag: Optional[str]` (예: "problem_statement", "example_story", "data_explanation")
@@ -290,6 +290,7 @@
     - "경제/경영" → "economy"
     - "인문/자기계발" → "humanities"
     - "과학/기술" → "science"
+  - 스키마 클래스 반환 함수: `get_page_schema_class()`, `get_chapter_schema_class()`
 
 #### 5.3 LLM Chains 구현
 - [ ] `backend/summarizers/llm_chains.py` 생성
