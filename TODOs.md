@@ -311,12 +311,12 @@
     - 도메인별 추가 필드 지침 포함
 
 #### 5.4 Page Extractor 구현
-- [ ] `backend/summarizers/page_extractor.py` 생성
+- [x] `backend/summarizers/page_extractor.py` 생성 ✅ 완료
   - `PageExtractor` 클래스
-  - `extract_page_entities(page_text, book_context, domain, use_cache=True)` 메서드
-    - 입력: `page_text`, `book_context` (book_title, chapter_title, chapter_number), `domain`
+  - `extract_page_entities(page_text, book_context, use_cache=True)` 메서드
+    - 입력: `page_text`, `book_context` (book_title, chapter_title, chapter_number)
     - SummaryCacheManager 통합 (캐시 확인 → LLM 호출 → 캐시 저장)
-    - 도메인별 스키마 선택 및 LLM 호출
+    - 도메인별 스키마 선택 및 LLM 호출 (PageExtractionChain 사용)
     - 결과를 JSON으로 변환하여 반환
   - **캐시 통합**: SummaryCacheManager 사용, 콘텐츠 해시 기반 캐시 키
 
