@@ -208,15 +208,24 @@ Remember: Only extract what is explicitly mentioned in the text. Do NOT invent o
 
 def _add_additional_properties_false(schema: Dict[str, Any]) -> None:
     """
-    JSON Schema에 additionalProperties: false 추가 (재귀적으로)
+    JSON Schema에 additionalProperties: false 및 required 배열 추가 (재귀적으로)
     
-    OpenAI Structured Output은 모든 객체에 additionalProperties: false를 요구합니다.
+    OpenAI Structured Output의 strict 모드는 다음을 요구합니다:
+    1. 모든 객체에 additionalProperties: false
+    2. 모든 필드를 required 배열에 포함 (Optional 필드도 포함)
+    
     공통 유틸리티 함수로 두 클래스에서 사용.
     """
     if isinstance(schema, dict):
-        # 현재 레벨에 additionalProperties 추가
+        # 현재 레벨 처리
         if "type" in schema and schema["type"] == "object":
+            # additionalProperties: false 추가
             schema["additionalProperties"] = False
+            
+            # required 배열 추가 (모든 properties 키 포함)
+            if "properties" in schema and isinstance(schema["properties"], dict):
+                # 모든 properties 키를 required에 포함
+                schema["required"] = list(schema["properties"].keys())
         
         # 재귀적으로 모든 하위 객체 처리
         for key, value in schema.items():
