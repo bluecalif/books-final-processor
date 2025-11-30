@@ -97,12 +97,13 @@ class TextOrganizer:
                     continue
 
                 page_data = pages_dict[page_num]
-                raw_text = page_data.get("raw_text", "")
+                # Footer 제외한 텍스트 추출
+                text_without_footer = self._extract_text_without_footer(page_data)
 
                 chapter_pages.append(
                     {
                         "page_number": page_num,
-                        "text": raw_text,
+                        "text": text_without_footer,
                     }
                 )
 
@@ -242,4 +243,43 @@ class TextOrganizer:
         except Exception as e:
             logger.error(f"[ERROR] 텍스트 JSON 파일 저장 실패: {e}, json_file={json_file}")
             raise
+
+    def _extract_text_without_footer(self, page_data: Dict[str, Any]) -> str:
+        """
+        Footer 요소를 제외한 페이지 텍스트 추출
+
+        Args:
+            page_data: 페이지 데이터 딕셔너리
+
+        Returns:
+            Footer 제외한 텍스트
+        """
+        elements = page_data.get("elements", [])
+        if not elements:
+            # elements가 없으면 raw_text 사용 (fallback)
+            return page_data.get("raw_text", "")
+
+        # Footer가 아닌 요소만 필터링
+        non_footer_elements = []
+        for elem in elements:
+            # 1. category='footer'인 요소 제외
+            if elem.get("category") == "footer":
+                continue
+
+            # 2. y0 좌표가 큰 요소 (페이지 하단, y0 > 0.9) 제외
+            bbox = elem.get("bbox", {})
+            y0 = bbox.get("y0", 0.0)
+            if y0 > 0.9:  # 페이지 하단 10% 영역
+                continue
+
+            # Footer가 아닌 요소만 추가
+            non_footer_elements.append(elem)
+
+        # 텍스트 추출
+        if non_footer_elements:
+            text_parts = [elem.get("text", "").strip() for elem in non_footer_elements if elem.get("text", "")]
+            return " ".join(text_parts)
+        else:
+            # Footer만 있는 경우 빈 문자열 반환
+            return ""
 

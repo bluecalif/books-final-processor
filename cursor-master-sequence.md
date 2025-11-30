@@ -23,6 +23,7 @@
 * **supabase**: connection string 확인. transaction pooler에서 ipv4 버전 string 확인
 
 ## 5. 프로젝트 작업 개시(주의사항)
+* **가장 중요: AGENTS.md와 커서룰이 항상 적용되도록 리마인드 할것. 이것을 기억**
 * **실제 데이터**: 테스트시 Mock이 아닌 실제 데이터로 E2E 테스트
 * **Supabase 연동**: Phase 마다 supabase와 연동되어 처리 되도록 작성되어야 함. 테스트도 동일하게 진행
 * **데이터 Coverage 조기 확인**: 여러 Phase로 나눠진 경우, 첫 Phase에서 가능한 모든 데이터 수집경로(소스, 카테고리등)에 대해서 실행시 문제없는것 확인해야 함. 최소한 검증으로 Phase 번호만 계속 올라가는것은 의미없음. 나중에 문제가 더 커짐.
