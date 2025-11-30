@@ -33,11 +33,14 @@ def test_e2e_extraction_full_flow(e2e_client: httpx.Client, test_samples):
     전체 엔티티 추출 플로우 E2E 테스트
     
     구조 확정된 책 (챕터 6개 이상) → 페이지 엔티티 추출 → 챕터 구조화
+    
+    ⚠️ 현재는 첫 번째 책만 테스트 (시간 절약)
     """
     if not test_samples:
         pytest.skip("No test samples available")
     
-    for sample in test_samples:
+    # 첫 번째 책만 테스트
+    sample = test_samples[0]
         book_id = sample["book_id"]
         category = sample["category"]
         

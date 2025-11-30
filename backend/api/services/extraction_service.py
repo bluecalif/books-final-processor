@@ -6,7 +6,8 @@
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy.orm import Session
 from backend.api.models.book import Book, BookStatus, PageSummary, ChapterSummary, Chapter
 from backend.parsers.pdf_parser import PDFParser
@@ -108,18 +109,23 @@ class ExtractionService:
         # 스키마 클래스 가져오기 (출력 토큰 예상치 계산용)
         page_schema_class = get_page_schema_class(domain)
 
-        # 6. 각 본문 페이지 엔티티 추출
-        extracted_count = 0
-        for page_number in main_pages:
+        # 6. 각 본문 페이지 엔티티 추출 (병렬 처리)
+        def extract_single_page(page_number: int) -> Tuple[int, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+            """
+            단일 페이지 엔티티 추출 (병렬 처리용)
+            
+            Returns:
+                (page_number, structured_data, token_info) 또는 (page_number, None, None) (실패 시)
+            """
             page_data = pages_dict.get(page_number)
             if not page_data:
                 logger.warning(f"[WARNING] Page {page_number} not found in parsed data")
-                continue
+                return (page_number, None, None)
 
             page_text = page_data.get("raw_text", "")
             if not page_text:
                 logger.warning(f"[WARNING] Page {page_number} has no raw_text")
-                continue
+                return (page_number, None, None)
 
             # 책 컨텍스트 생성
             chapter_info = self._get_chapter_info(book, page_number)
@@ -140,11 +146,11 @@ class ExtractionService:
                 )
                 cost = self.token_counter.calculate_cost(input_tokens, output_tokens)
                 
-                # 통계 누적
-                self.token_stats["pages"]["total_input_tokens"] += input_tokens
-                self.token_stats["pages"]["total_output_tokens"] += output_tokens
-                self.token_stats["pages"]["total_cost"] += cost
-                self.token_stats["pages"]["page_count"] += 1
+                token_info = {
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost": cost,
+                }
                 
                 logger.info(
                     f"[TOKEN] Page {page_number}: input={input_tokens}, "
@@ -156,6 +162,33 @@ class ExtractionService:
                     page_text, book_context, use_cache=True
                 )
 
+                return (page_number, structured_data, token_info)
+
+            except Exception as e:
+                logger.error(f"[ERROR] Failed to extract page {page_number}: {e}")
+                return (page_number, None, None)
+
+        # 병렬 처리로 페이지 엔티티 추출
+        extracted_count = 0
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                executor.submit(extract_single_page, page_number): page_number
+                for page_number in main_pages
+            }
+            
+            for future in as_completed(futures):
+                page_number, structured_data, token_info = future.result()
+                
+                if structured_data is None:
+                    continue
+                
+                # 토큰 통계 누적
+                if token_info:
+                    self.token_stats["pages"]["total_input_tokens"] += token_info["input_tokens"]
+                    self.token_stats["pages"]["total_output_tokens"] += token_info["output_tokens"]
+                    self.token_stats["pages"]["total_cost"] += token_info["cost"]
+                    self.token_stats["pages"]["page_count"] += 1
+                
                 # PageSummary 저장 또는 업데이트
                 page_summary = (
                     self.db.query(PageSummary)
@@ -184,10 +217,10 @@ class ExtractionService:
                 extracted_count += 1
                 if extracted_count % 10 == 0:
                     logger.info(f"[INFO] Extracted {extracted_count} pages...")
-
-            except Exception as e:
-                logger.error(f"[ERROR] Failed to extract page {page_number}: {e}")
-                continue
+                
+                # 주기적으로 커밋 (병렬 처리 중 데이터 손실 방지)
+                if extracted_count % 20 == 0:
+                    self.db.commit()
 
         # 7. 상태 업데이트
         book.status = BookStatus.PAGE_SUMMARIZED

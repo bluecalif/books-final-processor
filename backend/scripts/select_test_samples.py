@@ -7,6 +7,7 @@ import json
 import logging
 from pathlib import Path
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from backend.api.database import SessionLocal
 from backend.api.models.book import Book, Chapter
 
@@ -35,7 +36,7 @@ def select_test_samples() -> dict:
         books_with_6plus_chapters = (
             db.query(Chapter.book_id)
             .group_by(Chapter.book_id)
-            .having(db.func.count(Chapter.id) >= 6)
+            .having(func.count(Chapter.id) >= 6)
             .all()
         )
         
