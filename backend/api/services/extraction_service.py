@@ -169,7 +169,11 @@ class ExtractionService:
                 return (page_number, None, None)
 
         # 병렬 처리로 페이지 엔티티 추출
+        import time as time_module
+        extraction_start_time = time_module.time()
         extracted_count = 0
+        total_pages = len(main_pages)
+        
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {
                 executor.submit(extract_single_page, page_number): page_number
@@ -215,8 +219,21 @@ class ExtractionService:
                     self.db.add(page_summary)
 
                 extracted_count += 1
+                
+                # 10페이지당 진행 시간 출력
                 if extracted_count % 10 == 0:
-                    logger.info(f"[INFO] Extracted {extracted_count} pages...")
+                    elapsed_time = time_module.time() - extraction_start_time
+                    avg_time_per_page = elapsed_time / extracted_count
+                    remaining_pages = total_pages - extracted_count
+                    estimated_remaining_time = avg_time_per_page * remaining_pages
+                    
+                    logger.info(
+                        f"[PROGRESS] Pages: {extracted_count}/{total_pages} "
+                        f"({extracted_count * 100 // total_pages}%) | "
+                        f"Elapsed: {elapsed_time:.1f}s | "
+                        f"Avg: {avg_time_per_page:.2f}s/page | "
+                        f"Est. remaining: {estimated_remaining_time:.1f}s"
+                    )
                 
                 # 주기적으로 커밋 (병렬 처리 중 데이터 손실 방지)
                 if extracted_count % 20 == 0:
