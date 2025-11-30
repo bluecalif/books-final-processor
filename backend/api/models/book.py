@@ -26,6 +26,7 @@ class Book(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=True)
     author = Column(String, nullable=True)
+    category = Column(String, nullable=True)  # 분야 (예: 역사/사회, 경제/경영 등)
     source_file_path = Column(String, nullable=False)
     page_count = Column(Integer, nullable=True)
     status = Column(SQLEnum(BookStatus), default=BookStatus.UPLOADED, nullable=False)

@@ -21,7 +21,7 @@
 |-------|------|-------|------|
 | Phase 1 | 프로젝트 기초 및 환경 설정 | 100% | 완료 |
 | Phase 2 | PDF 파싱 모듈 (Upstage API 연동) | 100% | 완료 |
-| Phase 3 | 구조 분석 모듈 | 98% | 진행 중 (3.8 테스트 남음) |
+| Phase 3 | 구조 분석 모듈 | 100% | 완료 |
 | Phase 4 | 대량 도서 처리 프레임 단계 | 0% | 미시작 |
 | Phase 5 | 요약 모듈 | 0% | 미시작 |
 | Phase 6 | 통합 및 테스트 | 0% | 미시작 |
@@ -99,7 +99,7 @@
 - Ground Truth 기반 정확도 평가 통과
 - 캐시 재사용 검증 통과 (Upstage API 호출 없음)
 
-**미완료**: 3.8 도서 텍스트 파일 정리 테스트
+**완료**: 3.8 도서 텍스트 파일 정리 테스트 ✅
 
 ---
 
@@ -116,12 +116,12 @@
 **목표**: Book 모델에 분야(category) 필드 추가, 캐시에도 분야 정보 저장
 
 #### 4.1.1 Book 모델 확장
-- [ ] `backend/api/models/book.py` 수정
+- [x] `backend/api/models/book.py` 수정 ✅ 완료
   - `category` 필드 추가 (String, nullable=True)
-  - DB 마이그레이션: 기존 DB에 ALTER TABLE로 category 컬럼 추가
-- [ ] `backend/api/schemas/book.py` 수정
-  - `BookResponse`, `BookCreate`, `BookListResponse`에 `category` 필드 추가
-- [ ] `backend/api/services/book_service.py` 수정
+  - DB 마이그레이션: 기존 DB에 ALTER TABLE로 category 컬럼 추가 (`backend/scripts/add_category_column.py`)
+- [x] `backend/api/schemas/book.py` 수정 ✅ 완료
+  - `BookResponse`, `BookCreate`에 `category` 필드 추가
+- [x] `backend/api/services/book_service.py` 수정 ✅ 완료
   - `create_book()`에서 category 필드 처리 추가
 
 #### 4.1.2 캐시 메타데이터 확장

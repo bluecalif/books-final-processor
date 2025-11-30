@@ -196,6 +196,29 @@ $env:LOG_LEVEL = "DEBUG"; python script.py
 python -c 'print("Hello")'  # 작은따옴표 사용
 ```
 
+#### ⚠️ 중요: 임시 실행 코드는 항상 스크립트 파일로 작성
+
+**PowerShell 환경 문제**: 한글/특수문자 포함된 Python 코드를 `python -c`로 직접 실행 시 인코딩 및 따옴표 처리 문제 발생
+
+**규칙**: 
+- ❌ `python -c "복잡한 코드"` 직접 실행 금지
+- ✅ 임시 실행 코드는 항상 스크립트 파일로 작성 후 실행
+- ✅ 실행 후 임시 스크립트 파일은 삭제 (단, 테스트용 스크립트는 보존)
+
+**예시**:
+```powershell
+# ❌ BAD - 직접 실행 (PowerShell 인코딩 문제)
+poetry run python -c "from pathlib import Path; print(list(Path('data').glob('*.json')))"
+
+# ✅ GOOD - 스크립트 파일로 작성 후 실행
+# 1. 스크립트 파일 작성
+# check_files.py 파일 생성
+# 2. 실행
+poetry run python check_files.py
+# 3. 정리
+Remove-Item check_files.py
+```
+
 #### 모듈 실행 시 경로 문제 해결
 
 **문제**: `python module/submodule/script.py` 실행 시 `ModuleNotFoundError: No module named 'module'` 발생

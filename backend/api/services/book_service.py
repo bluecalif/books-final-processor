@@ -24,7 +24,7 @@ class BookService:
         logger.info("=" * 80)
 
     def create_book(
-        self, file_path: Path, title: Optional[str] = None, author: Optional[str] = None
+        self, file_path: Path, title: Optional[str] = None, author: Optional[str] = None, category: Optional[str] = None
     ) -> Book:
         """
         책 생성 (파일 저장 및 DB 레코드 생성)
@@ -33,6 +33,7 @@ class BookService:
             file_path: 업로드된 파일 경로
             title: 책 제목 (선택)
             author: 저자 (선택)
+            category: 분야 (선택, 예: 역사/사회, 경제/경영 등)
 
         Returns:
             생성된 Book 객체
@@ -89,10 +90,11 @@ class BookService:
 
         # DB 레코드 생성
         logger.info("[CALL] Book() 생성자 호출 시작")
-        logger.info(f"[PARAM] title={title}, author={author}, source_file_path={saved_path}, status=UPLOADED")
+        logger.info(f"[PARAM] title={title}, author={author}, category={category}, source_file_path={saved_path}, status=UPLOADED")
         book = Book(
             title=title,
             author=author,
+            category=category,
             source_file_path=str(saved_path),
             status=BookStatus.UPLOADED,
         )

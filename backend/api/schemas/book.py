@@ -10,6 +10,7 @@ class BookResponse(BaseModel):
     id: int
     title: Optional[str] = None
     author: Optional[str] = None
+    category: Optional[str] = None  # 분야 (예: 역사/사회, 경제/경영 등)
     source_file_path: str
     page_count: Optional[int] = None
     status: BookStatus
@@ -32,4 +33,5 @@ class BookCreate(BaseModel):
     """책 생성 스키마 (업로드용)"""
     title: Optional[str] = None
     author: Optional[str] = None
+    category: Optional[str] = None  # 분야 (예: 역사/사회, 경제/경영 등)
 
