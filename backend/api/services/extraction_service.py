@@ -75,24 +75,94 @@ class ExtractionService:
         
         logger.info(f"[INFO] Domain: {domain} (category: {book.category})")
 
-        # 3. 구조 데이터 확인
+        # 3. 구조 데이터 확인 및 검증
+        logger.info(f"[INPUT_VALIDATION] Checking structure_data for book_id={book_id}")
         if not book.structure_data:
+            logger.error(f"[INPUT_VALIDATION] Book {book_id} has no structure_data")
             raise ValueError(f"Book {book_id} has no structure_data. Please run structure analysis first.")
 
-        main_pages = book.structure_data.get("main", {}).get("pages", [])
-        if not main_pages:
+        # 구조 데이터 형식 확인 및 로깅
+        structure_keys = list(book.structure_data.keys())
+        logger.info(f"[INPUT_VALIDATION] structure_data keys: {structure_keys}")
+        
+        # 구조 데이터 형식 확인 및 main_pages 생성
+        # 형식 1: {"main": {"pages": [87, 88, ...]}}
+        # 형식 2: {"main_start_page": 87, "main_end_page": 474, "chapters": [...]}
+        main_pages = None
+        structure_format = None
+        
+        if "main" in book.structure_data and "pages" in book.structure_data["main"]:
+            # 형식 1: main.pages 직접 사용
+            structure_format = "format_1_main_pages"
+            main_pages = book.structure_data["main"]["pages"]
+            logger.info(f"[INPUT_VALIDATION] Using format 1: main.pages (count: {len(main_pages)})")
+        elif "main_start_page" in book.structure_data and "main_end_page" in book.structure_data:
+            # 형식 2: main_start_page ~ main_end_page 범위로 생성
+            structure_format = "format_2_range"
+            main_start_page = book.structure_data["main_start_page"]
+            main_end_page = book.structure_data["main_end_page"]
+            main_pages = list(range(main_start_page, main_end_page + 1))
+            logger.info(
+                f"[INPUT_VALIDATION] Using format 2: main_start_page={main_start_page}, "
+                f"main_end_page={main_end_page}, generated pages count: {len(main_pages)}"
+            )
+        else:
+            logger.error(
+                f"[INPUT_VALIDATION] Book {book_id} structure_data format not recognized. "
+                f"Available keys: {structure_keys}. "
+                f"Expected: 'main.pages' or 'main_start_page'/'main_end_page'"
+            )
             logger.warning(f"[WARNING] Book {book_id} has no main pages, skipping extraction")
             return book
 
-        logger.info(f"[INFO] Main pages: {main_pages[:10]}... (total: {len(main_pages)})")
+        if not main_pages:
+            logger.error(f"[INPUT_VALIDATION] Book {book_id} main_pages is empty after processing")
+            logger.warning(f"[WARNING] Book {book_id} has no main pages, skipping extraction")
+            return book
+
+        logger.info(f"[INPUT_VALIDATION] Main pages range: {main_pages[0]}~{main_pages[-1]} (total: {len(main_pages)})")
 
         # 4. PDF 파싱 (캐시 사용)
-        logger.info(f"[INFO] Parsing PDF: {book.source_file_path}")
+        logger.info(f"[INPUT_VALIDATION] Checking PDF file: {book.source_file_path}")
+        if not Path(book.source_file_path).exists():
+            logger.error(f"[INPUT_VALIDATION] PDF file not found: {book.source_file_path}")
+            raise FileNotFoundError(f"PDF file not found: {book.source_file_path}")
+        
+        logger.info(f"[INPUT_VALIDATION] Parsing PDF: {book.source_file_path}")
         parsed_data = self.pdf_parser.parse_pdf(book.source_file_path, use_cache=True)
         pages_data = parsed_data.get("pages", [])
+        
+        if not pages_data:
+            logger.error(f"[INPUT_VALIDATION] Parsed data has no pages")
+            raise ValueError(f"Parsed data has no pages for book_id={book_id}")
 
         # 페이지 번호를 키로 하는 딕셔너리 생성
         pages_dict = {page.get("page_number"): page for page in pages_data}
+        parsed_page_numbers = sorted(pages_dict.keys())
+        logger.info(
+            f"[INPUT_VALIDATION] Parsed pages range: {parsed_page_numbers[0]}~{parsed_page_numbers[-1]} "
+            f"(total: {len(parsed_page_numbers)})"
+        )
+        
+        # main_pages와 parsed_data 매칭 검증
+        missing_pages = [p for p in main_pages if p not in pages_dict]
+        if missing_pages:
+            logger.warning(
+                f"[INPUT_VALIDATION] {len(missing_pages)} pages from main_pages not found in parsed_data: "
+                f"{missing_pages[:10]}{'...' if len(missing_pages) > 10 else ''}"
+            )
+        else:
+            logger.info(f"[INPUT_VALIDATION] All main_pages found in parsed_data (perfect match)")
+        
+        # 실제 처리할 페이지 수 계산
+        available_main_pages = [p for p in main_pages if p in pages_dict]
+        logger.info(
+            f"[INPUT_VALIDATION] Available pages for extraction: {len(available_main_pages)}/{len(main_pages)}"
+        )
+        
+        if not available_main_pages:
+            logger.error(f"[INPUT_VALIDATION] No available pages for extraction after matching")
+            raise ValueError(f"No available pages for extraction: main_pages={len(main_pages)}, matched={len(available_main_pages)}")
 
         # 5. PageExtractor 초기화
         page_extractor = PageExtractor(domain, enable_cache=True)
@@ -172,12 +242,18 @@ class ExtractionService:
         import time as time_module
         extraction_start_time = time_module.time()
         extracted_count = 0
-        total_pages = len(main_pages)
+        total_pages = len(available_main_pages)
+        
+        logger.info(
+            f"[EXTRACTION_START] Starting page extraction: "
+            f"total_pages={total_pages}, domain={domain}, "
+            f"parallel_workers=5"
+        )
         
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {
                 executor.submit(extract_single_page, page_number): page_number
-                for page_number in main_pages
+                for page_number in available_main_pages
             }
             
             for future in as_completed(futures):
@@ -254,9 +330,24 @@ class ExtractionService:
         )
         self._save_token_stats()
 
+        # 최종 검증 로그
+        total_time = time_module.time() - extraction_start_time
         logger.info(
-            f"[INFO] Page extraction completed: {extracted_count}/{len(main_pages)} pages extracted"
+            f"[EXTRACTION_COMPLETE] Page extraction completed: "
+            f"extracted={extracted_count}/{total_pages} pages, "
+            f"time={total_time:.1f}s, "
+            f"avg={total_time/max(extracted_count, 1):.2f}s/page"
         )
+        
+        # DB 저장 검증
+        saved_count = self.db.query(PageSummary).filter(PageSummary.book_id == book_id).count()
+        logger.info(f"[OUTPUT_VALIDATION] PageSummaries saved to DB: {saved_count} records")
+        
+        if saved_count != extracted_count:
+            logger.warning(
+                f"[OUTPUT_VALIDATION] Mismatch: extracted={extracted_count}, saved={saved_count}"
+            )
+        
         return book
 
     def extract_chapters(self, book_id: int) -> Book:

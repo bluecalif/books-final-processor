@@ -1,0 +1,348 @@
+---
+alwaysApply: true
+description: 데이터 플로우 계약 규칙 (파싱, 구조분석, 텍스트정리, 추출 단계 간 데이터 형식 동기화)
+---
+
+# Data Flow Contracts
+
+## Overview
+
+프로젝트의 각 단계(파싱, 구조분석, 텍스트정리, 추출) 간 데이터 형식 계약을 명확히 정의합니다. 
+각 단계의 입력/출력 형식이 일치해야 하며, 형식 불일치 시 명확한 로그로 문제를 표시합니다.
+
+## Domain Knowledge
+
+### 프로젝트 데이터 플로우
+
+```
+PDF 파일
+  ↓
+[1. 파싱] → 로컬 캐시 (data/cache/upstage/{hash}.json)
+  ↓
+[2. 구조분석] → DB (books.structure_data)
+  ↓
+[3. 텍스트정리] → 로컬 파일 (data/output/text/{book_title}_text.json)
+  ↓
+[4. 추출] → DB (page_summaries.structured_data, chapter_summaries.structured_data)
+```
+
+### 각 단계별 계약
+
+#### 1. 파싱 단계 (PDFParser)
+
+**입력**:
+- PDF 파일 경로: `str` (예: `data/input/1000년.pdf`)
+
+**출력**:
+- 로컬 캐시: `data/cache/upstage/{hash}.json` (Upstage API 원본 응답)
+- 반환값: `Dict[str, Any]`
+  ```python
+  {
+      "pages": [
+          {
+              "page_number": 1,  # 1-based
+              "raw_text": "...",
+              "elements": [...]
+          },
+          ...
+      ],
+      "total_pages": 652,
+      "metadata": {...}
+  }
+  ```
+
+**계약 검증**:
+- `pages` 리스트 필수
+- 각 페이지에 `page_number` 필수 (1-based)
+- 각 페이지에 `raw_text` 필수
+
+#### 2. 구조분석 단계 (StructureService)
+
+**입력**:
+- 파싱 결과: `Dict[str, Any]` (PDFParser 출력)
+
+**출력**:
+- DB: `books.structure_data` (JSON)
+- 형식 2 (현재 사용 중): 
+  ```python
+  {
+      "main_start_page": 87,
+      "main_end_page": 474,
+      "chapters": [
+          {
+              "title": "1000년의세계",
+              "start_page": 87,
+              "end_page": 116,
+              "order_index": 0
+          },
+          ...
+      ],
+      "notes_pages": [],
+      "start_pages": [],
+      "end_pages": []
+  }
+  ```
+- 형식 1 (레거시, 지원 중):
+  ```python
+  {
+      "main": {
+          "pages": [87, 88, 89, ...],
+          "chapters": [...]
+      }
+  }
+  ```
+
+**계약 검증**:
+- `main_start_page`와 `main_end_page` 필수 (형식 2)
+- 또는 `main.pages` 필수 (형식 1)
+- `chapters` 리스트 필수
+
+#### 3. 텍스트정리 단계 (TextOrganizer)
+
+**입력**:
+- DB: `books.structure_data` (구조분석 출력)
+- 로컬 캐시: `data/cache/upstage/{hash}.json` (파싱 결과)
+
+**출력**:
+- 로컬 파일: `data/output/text/{book_title}_text.json`
+  ```python
+  {
+      "book_id": 176,
+      "book_title": "1000년",
+      "metadata": {
+          "total_pages": 652,
+          "main_start_page": 87,
+          "main_end_page": 474,
+          "chapter_count": 8
+      },
+      "text_content": {
+          "chapters": [
+              {
+                  "order_index": 0,
+                  "chapter_number": 1,
+                  "title": "1000년의세계",
+                  "start_page": 87,
+                  "end_page": 116,
+                  "pages": [
+                      {
+                          "page_number": 87,
+                          "text": "..."
+                      },
+                      ...
+                  ]
+              },
+              ...
+          ]
+      }
+  }
+  ```
+
+**계약 검증**:
+- `structure_data` 형식 2 지원 (main_start_page/main_end_page)
+- 각 챕터의 `pages` 리스트 필수
+
+#### 4. 추출 단계 (ExtractionService)
+
+**입력**:
+- DB: `books.structure_data` (구조분석 출력, 형식 1 또는 형식 2)
+- 로컬 캐시: `data/cache/upstage/{hash}.json` (파싱 결과)
+
+**출력**:
+- DB: `page_summaries.structured_data` (도메인별 스키마)
+- DB: `chapter_summaries.structured_data` (도메인별 스키마)
+- 로컬 캐시: `data/cache/summaries/page_{hash}.json`
+- 로컬 캐시: `data/cache/summaries/chapter_{hash}.json`
+
+**계약 검증**:
+- `structure_data` 형식 1 또는 형식 2 모두 지원
+- `main_pages` 생성 후 `parsed_data`와 매칭 검증
+- 누락된 페이지 경고 로그
+
+## Standards & Conventions
+
+### 입력 검증 로그 형식
+
+모든 단계에서 입력 데이터 검증 시 다음 형식의 로그를 출력:
+
+```python
+logger.info(f"[INPUT_VALIDATION] Checking {data_type} for {identifier}")
+logger.info(f"[INPUT_VALIDATION] {data_type} keys: {list(data.keys())}")
+logger.info(f"[INPUT_VALIDATION] Using format {format_type}: {details}")
+logger.warning(f"[INPUT_VALIDATION] {issue_description}")
+logger.error(f"[INPUT_VALIDATION] {error_description}")
+```
+
+### 데이터 매칭 검증 로그
+
+단계 간 데이터 매칭 시 다음 형식의 로그를 출력:
+
+```python
+logger.info(f"[INPUT_VALIDATION] {source} range: {start}~{end} (total: {count})")
+logger.info(f"[INPUT_VALIDATION] {target} range: {start}~{end} (total: {count})")
+logger.info(f"[INPUT_VALIDATION] All {source} found in {target} (perfect match)")
+logger.warning(f"[INPUT_VALIDATION] {missing_count} pages from {source} not found in {target}: {missing_pages}")
+```
+
+### 출력 검증 로그
+
+각 단계의 출력 검증 시 다음 형식의 로그를 출력:
+
+```python
+logger.info(f"[OUTPUT_VALIDATION] {output_type} saved to {location}: {count} records")
+logger.warning(f"[OUTPUT_VALIDATION] Mismatch: {expected} expected, {actual} actual")
+```
+
+## Implementation Patterns
+
+### Pattern 1: 구조 데이터 형식 호환성
+
+```python
+# ExtractionService.extract_pages()
+# 구조 데이터 형식 확인 및 main_pages 생성
+structure_keys = list(book.structure_data.keys())
+logger.info(f"[INPUT_VALIDATION] structure_data keys: {structure_keys}")
+
+if "main" in book.structure_data and "pages" in book.structure_data["main"]:
+    # 형식 1: main.pages 직접 사용
+    main_pages = book.structure_data["main"]["pages"]
+    logger.info(f"[INPUT_VALIDATION] Using format 1: main.pages (count: {len(main_pages)})")
+elif "main_start_page" in book.structure_data and "main_end_page" in book.structure_data:
+    # 형식 2: main_start_page ~ main_end_page 범위로 생성
+    main_start_page = book.structure_data["main_start_page"]
+    main_end_page = book.structure_data["main_end_page"]
+    main_pages = list(range(main_start_page, main_end_page + 1))
+    logger.info(
+        f"[INPUT_VALIDATION] Using format 2: main_start_page={main_start_page}, "
+        f"main_end_page={main_end_page}, generated pages count: {len(main_pages)}"
+    )
+else:
+    logger.error(f"[INPUT_VALIDATION] structure_data format not recognized")
+    raise ValueError("Invalid structure_data format")
+```
+
+### Pattern 2: 데이터 매칭 검증
+
+```python
+# ExtractionService.extract_pages()
+# main_pages와 parsed_data 매칭 검증
+parsed_page_numbers = sorted(pages_dict.keys())
+logger.info(
+    f"[INPUT_VALIDATION] Parsed pages range: {parsed_page_numbers[0]}~{parsed_page_numbers[-1]} "
+    f"(total: {len(parsed_page_numbers)})"
+)
+
+missing_pages = [p for p in main_pages if p not in pages_dict]
+if missing_pages:
+    logger.warning(
+        f"[INPUT_VALIDATION] {len(missing_pages)} pages from main_pages not found in parsed_data: "
+        f"{missing_pages[:10]}{'...' if len(missing_pages) > 10 else ''}"
+    )
+else:
+    logger.info(f"[INPUT_VALIDATION] All main_pages found in parsed_data (perfect match)")
+
+available_main_pages = [p for p in main_pages if p in pages_dict]
+logger.info(
+    f"[INPUT_VALIDATION] Available pages for extraction: {len(available_main_pages)}/{len(main_pages)}"
+)
+```
+
+### Pattern 3: 출력 검증
+
+```python
+# ExtractionService.extract_pages()
+# DB 저장 검증
+saved_count = self.db.query(PageSummary).filter(PageSummary.book_id == book_id).count()
+logger.info(f"[OUTPUT_VALIDATION] PageSummaries saved to DB: {saved_count} records")
+
+if saved_count != extracted_count:
+    logger.warning(
+        f"[OUTPUT_VALIDATION] Mismatch: extracted={extracted_count}, saved={saved_count}"
+    )
+```
+
+## Checklist
+
+### 각 단계 구현 시
+
+- [ ] 입력 데이터 형식 검증 로그 추가
+- [ ] 데이터 매칭 검증 로그 추가 (이전 단계 출력과 현재 단계 입력)
+- [ ] 출력 데이터 형식 검증 로그 추가
+- [ ] 형식 불일치 시 명확한 에러 메시지
+- [ ] 누락된 데이터 경고 로그
+
+### 구조 데이터 형식
+
+- [ ] 형식 1 (`main.pages`) 지원 확인
+- [ ] 형식 2 (`main_start_page`/`main_end_page`) 지원 확인
+- [ ] 형식 자동 감지 및 변환 로직
+- [ ] 형식 불일치 시 명확한 로그
+
+### 데이터 매칭
+
+- [ ] `main_pages`와 `parsed_data` 페이지 범위 매칭
+- [ ] 누락된 페이지 경고
+- [ ] 실제 처리 가능한 페이지 수 계산 및 로깅
+
+## Common Pitfalls
+
+### ❌ 피해야 할 것
+
+1. **형식 가정**:
+```python
+# BAD - 형식 1만 가정
+main_pages = book.structure_data["main"]["pages"]  # ❌ 형식 2에서 실패
+```
+
+2. **매칭 검증 누락**:
+```python
+# BAD - 매칭 검증 없이 바로 사용
+for page_number in main_pages:
+    page_text = pages_dict[page_number]["raw_text"]  # ❌ KeyError 가능
+```
+
+3. **로그 부족**:
+```python
+# BAD - 문제 발생 시 원인 파악 불가
+main_pages = book.structure_data.get("main", {}).get("pages", [])
+if not main_pages:
+    return  # ❌ 왜 실패했는지 알 수 없음
+```
+
+### ✅ 권장 사항
+
+1. **형식 호환성**:
+```python
+# GOOD - 두 형식 모두 지원
+if "main" in book.structure_data and "pages" in book.structure_data["main"]:
+    main_pages = book.structure_data["main"]["pages"]
+elif "main_start_page" in book.structure_data:
+    main_pages = list(range(...))
+else:
+    logger.error(f"[INPUT_VALIDATION] Invalid format: {list(book.structure_data.keys())}")
+```
+
+2. **매칭 검증**:
+```python
+# GOOD - 매칭 검증 후 사용
+available_pages = [p for p in main_pages if p in pages_dict]
+logger.info(f"[INPUT_VALIDATION] Available: {len(available_pages)}/{len(main_pages)}")
+for page_number in available_pages:
+    page_text = pages_dict[page_number]["raw_text"]
+```
+
+3. **상세한 로그**:
+```python
+# GOOD - 문제 발생 시 원인 파악 가능
+logger.info(f"[INPUT_VALIDATION] structure_data keys: {list(book.structure_data.keys())}")
+if not main_pages:
+    logger.error(f"[INPUT_VALIDATION] main_pages is empty after processing")
+    logger.error(f"[INPUT_VALIDATION] structure_data: {json.dumps(book.structure_data, indent=2)}")
+```
+
+## References
+
+- Backend structure analysis: `.cursor/rules/backend-structure-analysis.mdc`
+- Backend extraction: `.cursor/rules/backend-extraction-summarization.mdc`
+- StructureService: `backend/api/services/structure_service.py`
+- ExtractionService: `backend/api/services/extraction_service.py`
+- TextOrganizer: `backend/structure/text_organizer.py`

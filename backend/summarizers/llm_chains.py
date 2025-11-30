@@ -65,6 +65,11 @@ class PageExtractionChain:
         prompt = self._build_prompt(page_text, book_context)
 
         try:
+            # JSON Schema 생성 및 additionalProperties 추가
+            json_schema = self.schema_class.model_json_schema()
+            # OpenAI Structured Output은 additionalProperties: false를 요구
+            _add_additional_properties_false(json_schema)
+            
             # Structured Output으로 LLM 호출
             response = self.client.beta.chat.completions.create(
                 model=self.model,
@@ -77,7 +82,7 @@ class PageExtractionChain:
                     "type": "json_schema",
                     "json_schema": {
                         "name": f"{self.domain}_page_extraction",
-                        "schema": self.schema_class.model_json_schema(),
+                        "schema": json_schema,
                         "strict": True,
                     },
                 },
@@ -201,6 +206,35 @@ Remember: Only extract what is explicitly mentioned in the text. Do NOT invent o
             return ""
 
 
+def _add_additional_properties_false(schema: Dict[str, Any]) -> None:
+    """
+    JSON Schema에 additionalProperties: false 추가 (재귀적으로)
+    
+    OpenAI Structured Output은 모든 객체에 additionalProperties: false를 요구합니다.
+    공통 유틸리티 함수로 두 클래스에서 사용.
+    """
+    if isinstance(schema, dict):
+        # 현재 레벨에 additionalProperties 추가
+        if "type" in schema and schema["type"] == "object":
+            schema["additionalProperties"] = False
+        
+        # 재귀적으로 모든 하위 객체 처리
+        for key, value in schema.items():
+            if key in ["properties", "items", "allOf", "anyOf", "oneOf"]:
+                if isinstance(value, dict):
+                    _add_additional_properties_false(value)
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, dict):
+                            _add_additional_properties_false(item)
+            elif isinstance(value, dict):
+                _add_additional_properties_false(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        _add_additional_properties_false(item)
+
+
 class ChapterStructuringChain:
     """챕터 구조화 LLM Chain"""
 
@@ -243,6 +277,11 @@ class ChapterStructuringChain:
         prompt = self._build_prompt(compressed_page_entities, book_context)
 
         try:
+            # JSON Schema 생성 및 additionalProperties 추가
+            json_schema = self.schema_class.model_json_schema()
+            # OpenAI Structured Output은 additionalProperties: false를 요구
+            _add_additional_properties_false(json_schema)
+            
             # Structured Output으로 LLM 호출
             response = self.client.beta.chat.completions.create(
                 model=self.model,
@@ -255,7 +294,7 @@ class ChapterStructuringChain:
                     "type": "json_schema",
                     "json_schema": {
                         "name": f"{self.domain}_chapter_structuring",
-                        "schema": self.schema_class.model_json_schema(),
+                        "schema": json_schema,
                         "strict": True,
                     },
                 },
