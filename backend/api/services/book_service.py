@@ -67,26 +67,10 @@ class BookService:
         logger.info(f"[ACTUAL] Service connection 테이블 실제값: {service_tables}")
         logger.info(f"[COMPARE] 'books' in service_tables: {'books' in service_tables}")
         
-        # 파일을 upload_dir로 이동
-        logger.info("[CALL] saved_path 계산 시작")
-        logger.info(f"[PARAM] settings.upload_dir={settings.upload_dir}, file_path.name={file_path.name}")
-        saved_path = settings.upload_dir / file_path.name
-        saved_path_str = str(saved_path)
-        logger.info(f"[RETURN] saved_path 계산 완료: saved_path={saved_path_str}")
-        
-        logger.info("[CALL] if file_path != saved_path 조건 확인 시작")
-        logger.info(f"[PARAM] file_path={file_path}, saved_path={saved_path_str}")
-        logger.info(f"[COMPARE] file_path != saved_path: {file_path != saved_path}")
-        if file_path != saved_path:
-            logger.info("[COMPARE] 조건 True: 파일 이동 필요")
-            import shutil
-            logger.info(f"[CALL] shutil.move() 호출 시작")
-            logger.info(f"[PARAM] src={file_path}, dst={saved_path}")
-            shutil.move(str(file_path), str(saved_path))
-            logger.info(f"[RETURN] shutil.move() 완료")
-            logger.info(f"[INFO] File moved to {saved_path}")
-        else:
-            logger.info("[COMPARE] 조건 False: 파일 이동 불필요 (이미 올바른 위치)")
+        # 파일을 이동하지 않고 원본 위치에 유지 (input 디렉토리에 유지)
+        # PDF 파일은 input 디렉토리에 그대로 유지
+        saved_path = Path(file_path)
+        logger.info(f"[INFO] PDF 파일 위치 유지: {saved_path} (uploads로 이동하지 않음)")
 
         # DB 레코드 생성
         logger.info("[CALL] Book() 생성자 호출 시작")

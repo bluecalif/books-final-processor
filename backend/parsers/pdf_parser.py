@@ -401,7 +401,10 @@ class PDFParser:
         logger.info("[INFO] 양면 분리 페이지 번호 매핑 요약:")
         logger.info(f"  - 원본 페이지 수: {len(pages_dict)}")
         logger.info(f"  - 분리 후 페이지 수: {len(result_pages)}")
-        logger.info(f"  - 분리 비율: {len(result_pages) / len(pages_dict):.2f}")
+        if len(pages_dict) > 0:
+            logger.info(f"  - 분리 비율: {len(result_pages) / len(pages_dict):.2f}")
+        else:
+            logger.warning(f"  - 분리 비율: 계산 불가 (원본 페이지 수가 0)")
         
         # 중요 페이지 범위의 원본 페이지 번호 추정
         # 분리 후 페이지 번호를 원본으로 환산: (page_num - 1) / 2 + 1 (대략)
