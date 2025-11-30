@@ -35,3 +35,33 @@ class BookCreate(BaseModel):
     author: Optional[str] = None
     category: Optional[str] = None  # 분야 (예: 역사/사회, 경제/경영 등)
 
+
+class PageSummaryResponse(BaseModel):
+    """페이지 요약 응답 스키마"""
+    id: int
+    book_id: int
+    page_id: Optional[int] = None
+    page_number: int
+    summary_text: str
+    structured_data: Optional[dict] = None  # 구조화된 엔티티 데이터 (도메인별 스키마)
+    lang: Optional[str] = None
+    created_at: datetime
+
+    model_config = {
+        "from_attributes": True,
+    }
+
+
+class ChapterSummaryResponse(BaseModel):
+    """챕터 요약 응답 스키마"""
+    id: int
+    book_id: int
+    chapter_id: int
+    summary_text: str
+    structured_data: Optional[dict] = None  # 구조화된 엔티티 데이터 (도메인별 스키마)
+    lang: Optional[str] = None
+    created_at: datetime
+
+    model_config = {
+        "from_attributes": True,
+    }

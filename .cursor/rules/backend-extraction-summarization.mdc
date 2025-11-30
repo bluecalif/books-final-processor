@@ -1,0 +1,438 @@
+---
+alwaysApply: true
+description: 페이지 엔티티 추출 및 챕터 구조화 모듈 규칙
+---
+
+# Backend 내용 추출 및 요약 규칙
+
+## Overview
+
+`docs/entity_extraction_guideline.md`를 바탕으로 페이지 단위 엔티티 추출 및 챕터 단위 구조화 파이프라인입니다. 단순 요약이 아닌 **구조화된 엔티티 추출**을 통해 사건·예시·개념·인사이트·참고자료를 입체적으로 재사용 가능하게 만듭니다.
+
+**핵심 원칙**:
+- 2단계 파이프라인: 페이지 구조화 → 챕터 구조화
+- 도메인별 스키마 지원 (역사/사회, 경제/경영, 인문/자기계발, 과학/기술)
+- Book.category 기반 도메인 자동 선택
+- 구조화된 JSON 데이터 저장 (단순 텍스트가 아님)
+
+## Domain Knowledge
+
+### 도메인 매핑
+
+도서 리스트 CSV의 `구분` 컬럼(또는 Book.category)을 기준으로 도메인 매핑:
+
+- `구분 = "역사/사회"` → `domain = "history"`
+  - 페이지: `HistoryPage`
+  - 챕터: `HistoryChapter`
+
+- `구분 = "경제/경영"` → `domain = "economy"`
+  - 페이지: `EconomyPage`
+  - 챕터: `EconomyChapter`
+
+- `구분 = "인문/자기계발"` → `domain = "humanities"`
+  - 페이지: `HumanitiesPage`
+  - 챕터: `HumanitiesChapter`
+
+- `구분 = "과학/기술"` → `domain = "science"`
+  - 페이지: `SciencePage`
+  - 챕터: `ScienceChapter`
+
+### 데이터 모델
+
+**PageSummary 모델 확장**:
+- `summary_text`: 하위 호환성을 위한 텍스트 요약 (기존 필드)
+- `structured_data` (JSON): 구조화된 엔티티 데이터
+  - 공통 필드: `page_summary`, `persons`, `concepts`, `events`, `examples`, `references`, `key_sentences`
+  - 도메인별 확장 필드 (JSON 내부에 저장)
+
+**ChapterSummary 모델 확장**:
+- `summary_text`: 하위 호환성을 위한 텍스트 요약 (기존 필드)
+- `structured_data` (JSON): 구조화된 엔티티 데이터
+  - 공통 필드: `core_message`, `summary_3_5_sentences`, `argument_flow`, `key_*`, `insights`, `chapter_level_synthesis`
+  - 도메인별 확장 필드 (JSON 내부에 저장)
+
+## Standards & Conventions
+
+### 도메인 스키마 정의
+
+```python
+# backend/summarizers/schemas.py
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
+
+class BasePageSchema(BaseModel):
+    """페이지 공통 스키마"""
+    page_summary: str  # 2~4문장
+    page_function_tag: Optional[str]  # "problem_statement", "example_story", "data_explanation" 등
+    persons: List[str] = []
+    concepts: List[str] = []
+    events: List[str] = []
+    examples: List[str] = []
+    references: List[str] = []
+    key_sentences: List[str] = []
+    tone_tag: Optional[str] = None
+    topic_tags: List[str] = []
+    complexity: Optional[str] = None
+
+class HistoryPage(BasePageSchema):
+    """역사/사회 페이지 스키마"""
+    locations: List[str] = []  # 도시/국가/지역/강 등
+    time_periods: List[str] = []  # 연대/세기/시대
+    polities: List[str] = []  # 왕조/제국/문명
+
+class EconomyPage(BasePageSchema):
+    """경제/경영 페이지 스키마"""
+    indicators: List[str] = []  # 지표/수치/그래프 요약
+    actors: List[str] = []  # 정부/기업/개인 투자자 등 이해관계자
+    strategies: List[str] = []  # 전략/원칙/규칙
+    cases: List[str] = []  # 회사/도시/산업/투자 사례
+
+class HumanitiesPage(BasePageSchema):
+    """인문/자기계발 페이지 스키마"""
+    psychological_states: List[str] = []  # 정서/심리 상태
+    life_situations: List[str] = []  # 직장/가족/관계 등 구체 상황
+    practices: List[str] = []  # 추천 습관/행동
+    inner_conflicts: List[str] = []  # 내적 갈등/딜레마
+
+class SciencePage(BasePageSchema):
+    """과학/기술 페이지 스키마"""
+    technologies: List[str] = []  # 핵심 기술
+    systems: List[str] = []  # 시스템/프로세스 구조
+    applications: List[str] = []  # 적용 영역/사례
+    risks_ethics: List[str] = []  # 위험/윤리/정책 이슈
+
+class BaseChapterSchema(BaseModel):
+    """챕터 공통 스키마"""
+    core_message: str  # 한 줄
+    summary_3_5_sentences: str
+    argument_flow: Dict[str, Any]  # problem, background, main_claims, evidence_overview, counterpoints_or_limits, conclusion_or_action
+    key_events: List[str] = []
+    key_examples: List[str] = []
+    key_persons: List[str] = []
+    key_concepts: List[str] = []
+    insights: List[Dict[str, Any]] = []  # type, text, supporting_evidence_ids
+    chapter_level_synthesis: str
+    references: List[str] = []
+
+# 도메인별 챕터 스키마도 동일하게 확장
+```
+
+### 도메인 매핑 함수
+
+```python
+# backend/summarizers/schemas.py
+def get_domain_from_category(category: str) -> str:
+    """Book.category를 도메인 코드로 변환"""
+    mapping = {
+        "역사/사회": "history",
+        "경제/경영": "economy",
+        "인문/자기계발": "humanities",
+        "과학/기술": "science"
+    }
+    return mapping.get(category, "humanities")  # 기본값: humanities
+```
+
+## Implementation Patterns
+
+### Pattern 1: LLM Chains with Structured Output
+
+```python
+# backend/summarizers/llm_chains.py
+from openai import OpenAI
+from pydantic import BaseModel
+from backend.config.settings import settings
+
+class PageExtractionChain:
+    """페이지 엔티티 추출 LLM Chain"""
+    
+    def __init__(self, domain: str):
+        self.client = OpenAI(api_key=settings.openai_api_key)
+        self.model = "gpt-4o-mini"
+        self.temperature = 0.3
+        self.domain = domain
+        self.schema = self._get_domain_schema(domain)  # 도메인별 Pydantic 스키마
+    
+    def extract_entities(
+        self, 
+        page_text: str, 
+        book_context: Dict[str, Any]
+    ) -> BaseModel:
+        """Structured Output으로 페이지 엔티티 추출"""
+        prompt = self._build_prompt(page_text, book_context)
+        
+        response = self.client.beta.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_schema", "json_schema": {
+                "name": f"{self.domain}_page_extraction",
+                "schema": self.schema.model_json_schema(),
+                "strict": True
+            }},
+            temperature=self.temperature
+        )
+        
+        result = self.schema.model_validate_json(response.choices[0].message.content)
+        return result
+```
+
+### Pattern 2: Page Extractor with Cache
+
+```python
+# backend/summarizers/page_extractor.py
+from backend.summarizers.summary_cache_manager import SummaryCacheManager
+from backend.summarizers.llm_chains import PageExtractionChain
+
+class PageExtractor:
+    """페이지 엔티티 추출기"""
+    
+    def __init__(self, domain: str, enable_cache: bool = True):
+        self.domain = domain
+        self.chain = PageExtractionChain(domain)
+        self.cache_manager = SummaryCacheManager() if enable_cache else None
+    
+    def extract_page_entities(
+        self,
+        page_text: str,
+        book_context: Dict[str, Any],
+        use_cache: bool = True
+    ) -> Dict[str, Any]:
+        """페이지 엔티티 추출 (캐시 통합)"""
+        # 1. 캐시 확인
+        if use_cache and self.cache_manager:
+            content_hash = self.cache_manager.get_content_hash(page_text)
+            cached_result = self.cache_manager.get_cached_summary(
+                content_hash, "page"
+            )
+            if cached_result:
+                logger.info(f"[INFO] Cache hit for page extraction")
+                return json.loads(cached_result)
+        
+        # 2. LLM 호출
+        result = self.chain.extract_entities(page_text, book_context)
+        
+        # 3. JSON으로 변환
+        result_json = result.model_dump_json()
+        
+        # 4. 캐시 저장
+        if use_cache and self.cache_manager:
+            content_hash = self.cache_manager.get_content_hash(page_text)
+            self.cache_manager.save_cache(content_hash, "page", result_json)
+            logger.info(f"[INFO] Cached page extraction result")
+        
+        return json.loads(result_json)
+```
+
+### Pattern 3: Chapter Structurer (페이지 엔티티 집계)
+
+```python
+# backend/summarizers/chapter_structurer.py
+class ChapterStructurer:
+    """챕터 구조화기"""
+    
+    def __init__(self, domain: str, enable_cache: bool = True):
+        self.domain = domain
+        self.chain = ChapterStructuringChain(domain)
+        self.cache_manager = SummaryCacheManager() if enable_cache else None
+    
+    def structure_chapter(
+        self,
+        page_entities_list: List[Dict[str, Any]],
+        book_context: Dict[str, Any],
+        use_cache: bool = True
+    ) -> Dict[str, Any]:
+        """챕터 구조화 (페이지 엔티티 집계)"""
+        # 1. 페이지 엔티티 압축 (상위 N개만 추려서 LLM에 전달)
+        compressed_pages = self._compress_page_entities(page_entities_list)
+        
+        # 2. 캐시 확인
+        if use_cache and self.cache_manager:
+            cache_key = self._generate_cache_key(compressed_pages)
+            cached_result = self.cache_manager.get_cached_summary(
+                cache_key, "chapter"
+            )
+            if cached_result:
+                logger.info(f"[INFO] Cache hit for chapter structuring")
+                return json.loads(cached_result)
+        
+        # 3. LLM 호출
+        result = self.chain.structure_chapter(compressed_pages, book_context)
+        
+        # 4. JSON으로 변환
+        result_json = result.model_dump_json()
+        
+        # 5. 캐시 저장
+        if use_cache and self.cache_manager:
+            cache_key = self._generate_cache_key(compressed_pages)
+            self.cache_manager.save_cache(cache_key, "chapter", result_json)
+            logger.info(f"[INFO] Cached chapter structuring result")
+        
+        return json.loads(result_json)
+    
+    def _compress_page_entities(self, page_entities_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """페이지 엔티티 압축 (상위 N개만 추려서)"""
+        compressed = []
+        for page_entity in page_entities_list:
+            compressed.append({
+                "page_number": page_entity.get("page_number"),
+                "page_summary": page_entity.get("page_summary"),
+                "page_function_tag": page_entity.get("page_function_tag"),
+                "key_concepts": page_entity.get("concepts", [])[:5],  # 상위 5개만
+                "key_events": page_entity.get("events", [])[:3],  # 상위 3개만
+                "key_examples": page_entity.get("examples", [])[:3],  # 상위 3개만
+            })
+        return compressed
+```
+
+### Pattern 4: Extraction Service
+
+```python
+# backend/api/services/extraction_service.py
+class ExtractionService:
+    """엔티티 추출 서비스"""
+    
+    def extract_pages(self, book_id: int):
+        """페이지 엔티티 추출"""
+        # 1. 책 조회
+        book = self.db.query(Book).filter(Book.id == book_id).first()
+        
+        # 2. 도메인 확인
+        domain = get_domain_from_category(book.category)
+        
+        # 3. PDF 파싱 (캐시 사용)
+        parsed_data = self.pdf_parser.parse_pdf(book.source_file_path, use_cache=True)
+        
+        # 4. 본문 페이지 범위 확인
+        main_pages = book.structure_data.get("main", {}).get("pages", [])
+        
+        # 5. 각 페이지 엔티티 추출
+        page_extractor = PageExtractor(domain, enable_cache=True)
+        for page_data in parsed_data["pages"]:
+            page_number = page_data["page_number"]
+            if page_number not in main_pages:
+                continue  # 본문 페이지만 처리
+            
+            page_text = page_data.get("raw_text", "")
+            book_context = {
+                "book_title": book.title,
+                "chapter_title": self._get_chapter_title(page_number, book),
+                "chapter_number": self._get_chapter_number(page_number, book)
+            }
+            
+            # 엔티티 추출
+            structured_data = page_extractor.extract_page_entities(
+                page_text, book_context, use_cache=True
+            )
+            
+            # DB 저장
+            page_summary = PageSummary(
+                book_id=book_id,
+                page_number=page_number,
+                summary_text=structured_data.get("page_summary", ""),  # 하위 호환성
+                structured_data=structured_data,  # JSON 저장
+                lang="ko"
+            )
+            self.db.add(page_summary)
+        
+        # 상태 업데이트
+        book.status = BookStatus.PAGE_SUMMARIZED
+        self.db.commit()
+```
+
+## Checklist
+
+### 데이터 모델 확장
+- [ ] `PageSummary.structured_data` (JSON) 필드 추가
+- [ ] `ChapterSummary.structured_data` (JSON) 필드 추가
+- [ ] DB 마이그레이션 스크립트 작성
+- [ ] Pydantic 스키마에 `structured_data` 필드 추가
+
+### 도메인 스키마 정의
+- [ ] `BasePageSchema`, `BaseChapterSchema` 정의
+- [ ] 도메인별 스키마 정의 (History, Economy, Humanities, Science)
+- [ ] `get_domain_from_category()` 함수 구현
+
+### LLM Chains 구현
+- [ ] `PageExtractionChain`: Structured Output 사용
+- [ ] `ChapterStructuringChain`: Structured Output 사용
+- [ ] 도메인별 프롬프트 템플릿 설계
+- [ ] 할루시네이션 방지 프롬프트 포함
+
+### 캐시 통합
+- [ ] Page Extractor에 SummaryCacheManager 통합
+- [ ] Chapter Structurer에 SummaryCacheManager 통합
+- [ ] 캐시 키 생성 (콘텐츠 해시 기반)
+- [ ] 캐시 저장/로드 검증
+
+### 서비스 및 API
+- [ ] Extraction Service 구현
+- [ ] PDF 파싱 캐시 사용 (`use_cache=True`)
+- [ ] 본문 페이지만 처리
+- [ ] 챕터 1-2개인 책 제외 로직
+- [ ] Extraction API 엔드포인트 구현
+- [ ] 백그라운드 작업 지원
+
+### 테스트
+- [ ] E2E 테스트: 전체 플로우 검증
+- [ ] 도메인별 스키마 검증
+- [ ] 구조화된 JSON 데이터 검증
+- [ ] 캐시 저장/재사용 검증
+- [ ] 실제 OpenAI API 연동 검증
+
+## Common Pitfalls
+
+### ❌ 피해야 할 것
+
+1. **단순 텍스트 요약만 저장**:
+```python
+# BAD - structured_data 없이 summary_text만 저장
+page_summary = PageSummary(
+    summary_text=summary,  # ❌ 구조화된 데이터 없음
+    structured_data=None
+)
+```
+
+2. **도메인 무시**:
+```python
+# BAD - 도메인 확인 없이 기본 스키마만 사용
+result = chain.extract_entities(page_text)  # ❌ 도메인별 필드 누락
+```
+
+3. **캐시 미사용**:
+```python
+# BAD - 캐시 없이 매번 LLM 호출
+result = chain.extract_entities(page_text, use_cache=False)  # ❌ 비용 증가
+```
+
+### ✅ 권장 사항
+
+1. **구조화된 데이터 저장**:
+```python
+# GOOD - structured_data에 전체 엔티티 저장
+page_summary = PageSummary(
+    summary_text=structured_data.get("page_summary", ""),  # 하위 호환성
+    structured_data=structured_data,  # ✅ 전체 구조화된 데이터
+    lang="ko"
+)
+```
+
+2. **도메인별 스키마 사용**:
+```python
+# GOOD - 도메인 확인 후 적절한 스키마 사용
+domain = get_domain_from_category(book.category)
+extractor = PageExtractor(domain)  # ✅ 도메인별 스키마
+```
+
+3. **캐시 필수 사용**:
+```python
+# GOOD - 항상 캐시 사용
+result = extractor.extract_page_entities(
+    page_text, book_context, use_cache=True  # ✅ 캐시 사용
+)
+```
+
+## References
+
+- 작업 지침: `docs/entity_extraction_guideline.md`
+- Phase 5 계획: `TODOs.md` (Line 238-350)
+- 캐시 매니저: `backend/summarizers/summary_cache_manager.py`
+- 선행 서비스: `docs/book-assistant_repomix_backend.md`

@@ -23,7 +23,7 @@
 | Phase 2 | PDF 파싱 모듈 (Upstage API 연동) | 100% | 완료 |
 | Phase 3 | 구조 분석 모듈 | 100% | 완료 |
 | Phase 4 | 대량 도서 처리 프레임 단계 | 100% | 완료 |
-| Phase 5 | 요약 모듈 | 0% | 미시작 |
+| Phase 5 | 내용 추출 및 요약 모듈 | 0% | 미시작 |
 | Phase 6 | 통합 및 테스트 | 0% | 미시작 |
 
 ## Git 저장소 정보
@@ -235,51 +235,142 @@
 
 ---
 
-## Phase 5: 요약 모듈
+## Phase 5: 내용 추출 및 요약 모듈
 
-**목표**: 페이지별 및 챕터별 서머리 생성 기능 구현
+**목표**: `docs/entity_extraction_guideline.md`를 바탕으로 페이지 단위 엔티티 추출 및 챕터 단위 구조화 파이프라인 구현
 
-> **참고**: 프론트엔드는 백엔드에서 종료하므로 Phase 5는 요약 모듈로 변경됨
+> **참고**: 단순 요약이 아닌 **구조화된 엔티티 추출**을 통해 사건·예시·개념·인사이트·참고자료를 입체적으로 재사용 가능하게 만듦
 
-#### 5.1 PageSummarizer 구현
-- [ ] `backend/summarizers/page_summarizer.py` 생성
-  - `PageSummarizer`: `summarize_page(page_text, book_context=None, use_cache=True)` - LLM에 전달, 2~4문장 또는 bullet 형태, 토큰 제한 고려
-  - **캐시 통합**: SummaryCacheManager 사용, 캐시 확인 → LLM 호출 → 캐시 저장
-- [ ] `backend/summarizers/llm_chains.py` 생성 (LLM 호출 공통 로직, 프롬프트 템플릿, 모델/온도/토큰 설정)
-- [x] `backend/summarizers/summary_cache_manager.py` 생성 ✅ 완료
-  - `SummaryCacheManager` 클래스: OpenAI 요약 결과 캐싱
-  - 콘텐츠 해시 기반 캐시 키 생성 (MD5)
-  - 캐시 저장/로드 (`data/cache/summaries/`)
-  - 페이지/챕터 요약 모두 캐시 지원
+**핵심 원칙**:
+- 2단계 파이프라인: 페이지 구조화 → 챕터 구조화
+- 도메인별 스키마 지원 (역사/사회, 경제/경영, 인문/자기계발, 과학/기술)
+- Book.category 기반 도메인 자동 선택
+- 구조화된 JSON 데이터 저장 (단순 텍스트가 아님)
 
-#### 5.2 ChapterSummarizer 구현
-- [ ] `backend/summarizers/chapter_summarizer.py` 생성
-  - `ChapterSummarizer`: `summarize_chapter(chapter_pages, page_summaries, use_cache=True)` - 옵션 A: 챕터 원문 직접 요약 / 옵션 B: 페이지 요약 집계 (권장), 1~3단락
-  - **캐시 통합**: SummaryCacheManager 사용, 캐시 확인 → LLM 호출 → 캐시 저장
+**참고 문서**: `docs/entity_extraction_guideline.md` (작업 지침)
 
-#### 5.3 요약 API 구현
-- [ ] `backend/api/routers/summary.py` 생성
-  - `GET /api/books/{id}/pages`: 페이지별 요약 리스트
-  - `GET /api/books/{id}/chapters`: 챕터별 요약 리스트
-  - `GET /api/books/{id}/chapters/{chapter_id}`: 챕터 상세 (요약 + 페이지 리스트)
-- [ ] `backend/api/services/summary_service.py` 생성 (요약 생성 비즈니스 로직, 백그라운드 작업, 상태 업데이트)
-  - **캐시 사용**: `PageSummarizer.summarize_page(use_cache=True)`, `ChapterSummarizer.summarize_chapter(use_cache=True)`
+#### 5.1 데이터 모델 확장
+- [x] `backend/api/models/book.py` 수정 ✅ 완료
+  - `PageSummary` 모델에 `structured_data` 필드 추가 (JSON, nullable=True)
+    - 공통 필드: `page_summary`, `persons`, `concepts`, `events`, `examples`, `references`, `key_sentences`
+    - 도메인별 확장 필드 (JSON 내부에 저장)
+  - `ChapterSummary` 모델에 `structured_data` 필드 추가 (JSON, nullable=True)
+    - 공통 필드: `core_message`, `summary_3_5_sentences`, `argument_flow`, `key_*`, `insights`, `chapter_level_synthesis`
+    - 도메인별 확장 필드 (JSON 내부에 저장)
+- [x] `backend/scripts/add_structured_data_columns.py` 생성 ✅ 완료
+  - DB 마이그레이션 스크립트: ALTER TABLE로 `structured_data` 컬럼 추가
+- [x] `backend/api/schemas/book.py` 수정 ✅ 완료
+  - `PageSummaryResponse`, `ChapterSummaryResponse`에 `structured_data` 필드 추가
+
+#### 5.2 도메인 스키마 정의
+- [ ] `backend/summarizers/schemas.py` 생성
+  - `BasePageSchema` (Pydantic): 공통 필드 정의
+    - `page_summary: str` (2~4문장)
+    - `page_function_tag: Optional[str]` (예: "problem_statement", "example_story", "data_explanation")
+    - `persons: List[str]`
+    - `concepts: List[str]`
+    - `events: List[str]`
+    - `examples: List[str]`
+    - `references: List[str]`
+    - `key_sentences: List[str]`
+    - `tone_tag: Optional[str]`, `topic_tags: List[str]`, `complexity: Optional[str]`
+  - `BaseChapterSchema` (Pydantic): 공통 필드 정의
+    - `core_message: str` (한 줄)
+    - `summary_3_5_sentences: str`
+    - `argument_flow: Dict[str, Any]` (problem, background, main_claims, evidence_overview, counterpoints_or_limits, conclusion_or_action)
+    - `key_events: List[str]`, `key_examples: List[str]`, `key_persons: List[str]`, `key_concepts: List[str]`
+    - `insights: List[Dict[str, Any]]` (type, text, supporting_evidence_ids)
+    - `chapter_level_synthesis: str`
+    - `references: List[str]`
+  - 도메인별 스키마 (상속):
+    - `HistoryPage`, `EconomyPage`, `HumanitiesPage`, `SciencePage` (BasePageSchema 상속)
+    - `HistoryChapter`, `EconomyChapter`, `HumanitiesChapter`, `ScienceChapter` (BaseChapterSchema 상속)
+  - 도메인 매핑 함수: `get_domain_from_category(category: str) -> str`
+    - "역사/사회" → "history"
+    - "경제/경영" → "economy"
+    - "인문/자기계발" → "humanities"
+    - "과학/기술" → "science"
+
+#### 5.3 LLM Chains 구현
+- [ ] `backend/summarizers/llm_chains.py` 생성
+  - `PageExtractionChain`: 페이지 엔티티 추출 (도메인별 스키마 사용)
+    - OpenAI API 클라이언트 초기화
+    - Structured Output 사용 (Pydantic 스키마 기반)
+    - 도메인별 프롬프트 템플릿
+    - 모델: `gpt-4o-mini` (권장), 온도: 0.3
+  - `ChapterStructuringChain`: 챕터 구조화 (페이지 결과 집계)
+    - 페이지 엔티티 압축/집계 후 LLM 호출
+    - 도메인별 프롬프트 템플릿
+    - Structured Output 사용
+  - 프롬프트 템플릿 설계 원칙:
+    - 입력 컨텍스트: `book_title`, `chapter_title`, `domain`, `raw_page_text` (또는 압축된 페이지 엔티티)
+    - 출력 포맷: 도메인별 `*Page`/`*Chapter` 스키마 (JSON)
+    - 할루시네이션 방지: 원문에 없는 내용 생성 금지
+
+#### 5.4 Page Extractor 구현
+- [ ] `backend/summarizers/page_extractor.py` 생성
+  - `PageExtractor` 클래스
+  - `extract_page_entities(page_text, book_context, domain, use_cache=True)` 메서드
+    - 입력: `page_text`, `book_context` (book_title, chapter_title, chapter_number), `domain`
+    - SummaryCacheManager 통합 (캐시 확인 → LLM 호출 → 캐시 저장)
+    - 도메인별 스키마 선택 및 LLM 호출
+    - 결과를 JSON으로 변환하여 반환
+  - **캐시 통합**: SummaryCacheManager 사용, 콘텐츠 해시 기반 캐시 키
+
+#### 5.5 Chapter Structurer 구현
+- [ ] `backend/summarizers/chapter_structurer.py` 생성
+  - `ChapterStructurer` 클래스
+  - `structure_chapter(page_entities_list, book_context, domain, use_cache=True)` 메서드
+    - 입력: `page_entities_list` (페이지 엔티티 목록), `book_context`, `domain`
+    - 페이지 엔티티 집계/압축 (상위 N개만 추려서 LLM에 전달)
+    - SummaryCacheManager 통합
+    - 결과를 JSON으로 변환하여 반환
+  - **캐시 통합**: SummaryCacheManager 사용, 압축된 페이지 엔티티 해시 기반 캐시 키
+
+#### 5.6 Extraction Service 구현
+- [ ] `backend/api/services/extraction_service.py` 생성
+  - 요약 생성 비즈니스 로직
   - **PDF 파싱 캐시 사용**: `pdf_parser.parse_pdf(use_cache=True)` - 캐시된 파싱 결과 재사용
-  - **⚠️ 챕터 1-2개인 책 제외**: 챕터가 1개 또는 2개인 책은 요약 생성에서 제외 (Phase 4.7에서 구조 분석 강화 후 처리)
+  - 페이지 엔티티 추출:
+    - 본문 페이지만 처리 (structure_data.main.pages 기준)
+    - 각 페이지별로 `PageExtractor.extract_page_entities()` 호출
+    - 결과를 `PageSummary.structured_data`에 JSON으로 저장
+    - `summary_text`는 `page_summary` 필드에서 추출하여 저장 (하위 호환성)
+  - 챕터 구조화:
+    - 각 챕터별로 해당 페이지 엔티티들을 집계
+    - `ChapterStructurer.structure_chapter()` 호출
+    - 결과를 `ChapterSummary.structured_data`에 JSON으로 저장
+    - `summary_text`는 `summary_3_5_sentences` 필드에서 추출하여 저장 (하위 호환성)
+  - DB 저장 및 상태 업데이트:
+    - `page_summarized` 상태로 업데이트 (페이지 엔티티 추출 완료 시)
+    - `summarized` 상태로 업데이트 (챕터 구조화 완료 시)
+  - **⚠️ 챕터 1-2개인 책 제외**: 챕터가 1개 또는 2개인 책은 요약 생성에서 제외 (Phase 6.1에서 구조 분석 강화 후 처리)
+  - 백그라운드 작업 지원
 
-#### 5.4 요약 모듈 테스트
+#### 5.7 Extraction API 구현
+- [ ] `backend/api/routers/extraction.py` 생성
+  - `GET /api/books/{id}/pages`: 페이지별 엔티티 리스트 (structured_data 포함)
+  - `GET /api/books/{id}/pages/{page_number}`: 페이지 엔티티 상세
+  - `GET /api/books/{id}/chapters`: 챕터별 구조화 결과 리스트 (structured_data 포함)
+  - `GET /api/books/{id}/chapters/{chapter_id}`: 챕터 구조화 결과 상세
+  - `POST /api/books/{id}/extract/pages`: 페이지 엔티티 추출 시작 (백그라운드 작업)
+  - `POST /api/books/{id}/extract/chapters`: 챕터 구조화 시작 (백그라운드 작업)
+- [ ] `backend/api/main.py`에 라우터 등록
+
+#### 5.8 Extraction 모듈 테스트
 - [ ] **E2E 테스트** (⚠️ 실제 서버 실행, 실제 데이터만):
-  - 전체 요약 생성 플로우: 구조 확정된 책 (챕터 3개 이상) → 페이지 요약 (실제 OpenAI API) → 챕터 요약, DB 저장 검증, 상태 변경 검증
-  - **캐시 저장 검증**: 요약 생성 후 `data/cache/summaries/`에 캐시 파일 생성 확인
-  - **캐시 재사용 검증**: 두 번째 요약 시 캐시 히트 확인 (LLM 호출 없이 캐시 사용)
-  - 요약 API: `GET /api/books/{id}/pages`, `GET /api/books/{id}/chapters`, `GET /api/books/{id}/chapters/{chapter_id}`, 백그라운드 작업
-  - 실제 LLM 연동: OpenAI API 호출 검증, 요약 품질 검증, API 에러 처리 검증
-  - 성능 테스트 (선택): 여러 페이지 병렬 요약, 대용량 챕터 요약
-  - **챕터 1-2개 제외 검증**: 챕터가 1개 또는 2개인 책은 요약 생성에서 제외되는지 확인
+  - 전체 엔티티 추출 플로우: 구조 확정된 책 (챕터 3개 이상) → 페이지 엔티티 추출 (실제 OpenAI API) → 챕터 구조화, DB 저장 검증, 상태 변경 검증
+  - **도메인별 스키마 검증**: 각 도메인(역사/사회, 경제/경영, 인문/자기계발, 과학/기술)별로 올바른 스키마가 생성되는지 확인
+  - **구조화된 JSON 데이터 검증**: `structured_data` 필드에 올바른 JSON 구조가 저장되는지 확인
+  - **캐시 저장 검증**: 엔티티 추출 후 `data/cache/summaries/`에 캐시 파일 생성 확인
+  - **캐시 재사용 검증**: 두 번째 추출 시 캐시 히트 확인 (LLM 호출 없이 캐시 사용)
+  - Extraction API: `GET /api/books/{id}/pages`, `GET /api/books/{id}/chapters`, `GET /api/books/{id}/chapters/{chapter_id}`, 백그라운드 작업
+  - 실제 LLM 연동: OpenAI API 호출 검증, Structured Output 검증, API 에러 처리 검증
+  - **챕터 1-2개 제외 검증**: 챕터가 1개 또는 2개인 책은 엔티티 추출에서 제외되는지 확인
 
-**검증**: E2E 테스트 통과 (⚠️ 실제 서버 실행, 실제 LLM 연동, 실제 요약 생성, Mock 사용 금지)
+**검증**: E2E 테스트 통과 (⚠️ 실제 서버 실행, 실제 LLM 연동, 실제 엔티티 추출, Mock 사용 금지)
 
-**⚠️ Git 커밋**: Phase 5 완료 후 `git add .`, `git commit -m "[Phase 5] 요약 모듈 구현"`, `git push origin main`
+**⚠️ Git 커밋**: Phase 5 완료 후 `git add .`, `git commit -m "[Phase 5] 내용 추출 및 요약 모듈 구현"`, `git push origin main`
 
 ---
 

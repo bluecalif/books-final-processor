@@ -83,6 +83,7 @@ class PageSummary(Base):
     page_id = Column(Integer, ForeignKey("pages.id", ondelete="CASCADE"), nullable=True)
     page_number = Column(Integer, nullable=False)  # 중복 저장 (조회 편의)
     summary_text = Column(Text, nullable=False)
+    structured_data = Column(JSON, nullable=True)  # 구조화된 엔티티 데이터 (도메인별 스키마)
     lang = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
@@ -99,6 +100,7 @@ class ChapterSummary(Base):
     book_id = Column(Integer, ForeignKey("books.id", ondelete="CASCADE"), nullable=False, index=True)
     chapter_id = Column(Integer, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
     summary_text = Column(Text, nullable=False)
+    structured_data = Column(JSON, nullable=True)  # 구조화된 엔티티 데이터 (도메인별 스키마)
     lang = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
