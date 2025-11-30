@@ -349,14 +349,14 @@
   - **⚠️ 챕터 1-2개인 책 제외**: 챕터가 1개 또는 2개인 책은 요약 생성에서 제외 (Phase 6.1에서 구조 분석 강화 후 처리)
 
 #### 5.7 Extraction API 구현
-- [ ] `backend/api/routers/extraction.py` 생성
+- [x] `backend/api/routers/extraction.py` 생성 ✅ 완료
   - `GET /api/books/{id}/pages`: 페이지별 엔티티 리스트 (structured_data 포함)
   - `GET /api/books/{id}/pages/{page_number}`: 페이지 엔티티 상세
   - `GET /api/books/{id}/chapters`: 챕터별 구조화 결과 리스트 (structured_data 포함)
   - `GET /api/books/{id}/chapters/{chapter_id}`: 챕터 구조화 결과 상세
   - `POST /api/books/{id}/extract/pages`: 페이지 엔티티 추출 시작 (백그라운드 작업)
   - `POST /api/books/{id}/extract/chapters`: 챕터 구조화 시작 (백그라운드 작업)
-- [ ] `backend/api/main.py`에 라우터 등록
+- [x] `backend/api/main.py`에 라우터 등록 ✅ 완료
 
 #### 5.8 Extraction 모듈 테스트
 - [ ] **E2E 테스트** (⚠️ 실제 서버 실행, 실제 데이터만):

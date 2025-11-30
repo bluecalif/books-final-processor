@@ -4,7 +4,7 @@ import sys
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.api.database import init_db
-from backend.api.routers import books, structure, text
+from backend.api.routers import books, structure, text, extraction
 
 # 로깅 설정 (서버 시작 시 초기화)
 def setup_logging():
@@ -66,6 +66,7 @@ app.add_middleware(
 app.include_router(books.router)
 app.include_router(structure.router)
 app.include_router(text.router)
+app.include_router(extraction.router)
 
 
 @app.get("/")
