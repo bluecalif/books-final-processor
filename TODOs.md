@@ -138,11 +138,13 @@
 
 **목표**: CSV 파일에서 도서 리스트 및 분야 정보 추출
 
-- [ ] `backend/utils/csv_parser.py` 생성
-  - `parse_book_list(csv_path)`: CSV 파일 파싱
+- [x] `backend/utils/csv_parser.py` 생성 ✅ 완료
+  - `BookCSVParser` 클래스: CSV 파일 파싱
+  - `parse_book_list(csv_path)`: CSV 파일 파싱 함수
   - 컬럼 매핑: `일련번호`, `Title`, `연도`, `저자`, `분야`, `Topic`, `요약`
   - 반환 형식: `List[Dict[str, Any]]` (각 도서 정보)
-  - 분야 정보 검증 (빈 값 처리, 유효성 검사)
+  - 분야 정보 검증 및 정규화 (빈 값 → "미분류", 길이 제한)
+  - 테스트 결과: 87개 도서 파싱 성공 (경제/경영 28개, 과학/기술 23개, 역사/사회 18개, 인문/자기계발 18개)
 
 **Git 커밋**: `git add .` → `git commit -m "[Phase 4] CSV 파일 파서 구현"` → `git push origin main`
 
