@@ -58,7 +58,7 @@ def organize_text(
     return {"message": "Text organization started", "book_id": book_id}
 
 
-@router.get("/{book_id}")
+@router.get("/{book_id}/text")
 def get_text_file(book_id: int, db: Session = Depends(get_db)):
     """
     정리된 텍스트 JSON 파일 반환

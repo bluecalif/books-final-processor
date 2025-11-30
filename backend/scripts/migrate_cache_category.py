@@ -35,6 +35,9 @@ def migrate_cache_category():
         # DB에서 모든 Book 레코드 조회 (category가 있는 것만)
         books = db.query(Book).filter(Book.category.isnot(None)).all()
         
+        # book_id -> category 매핑 생성
+        book_id_category_map = {book.id: book.category for book in books}
+        
         # source_file_path -> category 매핑 생성
         book_category_map = {}
         for book in books:
@@ -43,8 +46,29 @@ def migrate_cache_category():
                 book_category_map[Path(book.source_file_path).resolve()] = book.category
                 # 상대 경로도 추가
                 book_category_map[book.source_file_path] = book.category
+                # 파일명만으로도 매핑
+                book_category_map[Path(book.source_file_path).name] = book.category
         
-        logger.info(f"[INFO] DB에서 {len(book_category_map)}개의 분야 정보 매핑 생성")
+        logger.info(f"[INFO] DB에서 {len(books)}개 책의 분야 정보 매핑 생성")
+        
+        # text 파일에서 book_id 추출하여 매핑
+        text_dir = Path(__file__).parent.parent.parent / "data" / "output" / "text"
+        text_file_book_id_map = {}  # text 파일 해시 -> book_id
+        
+        if text_dir.exists():
+            for text_file in text_dir.glob("*.json"):
+                try:
+                    with open(text_file, 'r', encoding='utf-8') as f:
+                        text_data = json.load(f)
+                        book_id = text_data.get('book_id')
+                        if book_id:
+                            # text 파일명의 해시 부분 추출 (예: 3e9a6e_xxx.json -> 3e9a6e)
+                            text_file_hash = text_file.stem.split('_')[0]
+                            text_file_book_id_map[text_file_hash] = book_id
+                except Exception as e:
+                    logger.debug(f"[DEBUG] text 파일 읽기 실패: {text_file.name}: {e}")
+            
+            logger.info(f"[INFO] text 파일에서 {len(text_file_book_id_map)}개 book_id 매핑 생성")
         
         updated_count = 0
         skipped_count = 0
@@ -79,13 +103,30 @@ def migrate_cache_category():
                 # 경로 정규화
                 pdf_path = Path(pdf_path_str)
                 pdf_path_resolved = pdf_path.resolve() if pdf_path.exists() else pdf_path
+                pdf_filename = pdf_path.name  # 파일명만 추출
                 
-                # 매핑에서 분야 찾기
+                # 매핑에서 분야 찾기 (여러 방법 시도)
                 category = None
-                if pdf_path_resolved in book_category_map:
+                
+                # 방법 1: 캐시 파일명의 해시로 text 파일 찾아서 book_id 매칭
+                cache_file_hash = cache_file.stem  # 확장자 제거
+                for text_hash, book_id in text_file_book_id_map.items():
+                    if cache_file_hash.startswith(text_hash):
+                        if book_id in book_id_category_map:
+                            category = book_id_category_map[book_id]
+                            logger.info(f"[INFO] 캐시 파일 해시로 매칭: {cache_file.name} -> book_id {book_id} -> 분야: {category}")
+                            break
+                
+                # 방법 2: 절대 경로로 매칭
+                if not category and pdf_path_resolved in book_category_map:
                     category = book_category_map[pdf_path_resolved]
-                elif pdf_path_str in book_category_map:
+                # 방법 3: 원본 경로로 매칭
+                elif not category and pdf_path_str in book_category_map:
                     category = book_category_map[pdf_path_str]
+                # 방법 4: 파일명으로 매칭 (경로 무관)
+                elif not category and pdf_filename in book_category_map:
+                    category = book_category_map[pdf_filename]
+                    logger.info(f"[INFO] 파일명으로 매칭: {pdf_filename} -> 분야: {category}")
                 
                 if not category:
                     logger.warning(f"[WARNING] {cache_file.name}: 분야 정보를 찾을 수 없음 (pdf_path: {pdf_path_str})")
