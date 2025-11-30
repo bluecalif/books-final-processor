@@ -29,7 +29,7 @@ class ExtractionService:
         """
         self.db = db
         self.pdf_parser = PDFParser(use_cache=True)
-        self.token_counter = TokenCounter(model="gpt-4o-mini")
+        self.token_counter = TokenCounter(model="gpt-4.1-mini")
         # 토큰 통계 저장용
         self.token_stats = {
             "book_id": None,

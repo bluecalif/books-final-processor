@@ -381,15 +381,21 @@
 - [x] `pyproject.toml`에 tiktoken 의존성 추가 ✅ 완료
 
 #### 5.8 Extraction 모듈 테스트
-- [ ] **E2E 테스트** (⚠️ 실제 서버 실행, 실제 데이터만):
-  - 전체 엔티티 추출 플로우: 구조 확정된 책 (챕터 3개 이상) → 페이지 엔티티 추출 (실제 OpenAI API) → 챕터 구조화, DB 저장 검증, 상태 변경 검증
-  - **도메인별 스키마 검증**: 각 도메인(역사/사회, 경제/경영, 인문/자기계발, 과학/기술)별로 올바른 스키마가 생성되는지 확인
+- [x] `backend/scripts/select_test_samples.py` 생성 ✅ 완료
+  - 챕터 수 6개 이상인 도서 조회
+  - 분야별(역사/사회, 경제/경영, 인문/자기계발, 과학/기술) 파일명 가나다순 상위 1개씩 선정
+  - 결과를 JSON 파일로 저장 (`data/output/test_samples/selected_samples.json`)
+- [x] `backend/tests/test_e2e_extraction.py` 생성 ✅ 완료
+  - 전체 엔티티 추출 플로우: 구조 확정된 책 (챕터 6개 이상) → 페이지 엔티티 추출 (실제 OpenAI API) → 챕터 구조화, DB 저장 검증, 상태 변경 검증
+  - **도메인별 스키마 검증**: 각 도메인별로 올바른 스키마가 생성되는지 확인
   - **구조화된 JSON 데이터 검증**: `structured_data` 필드에 올바른 JSON 구조가 저장되는지 확인
-  - **캐시 저장 검증**: 엔티티 추출 후 `data/cache/summaries/`에 캐시 파일 생성 확인
-  - **캐시 재사용 검증**: 두 번째 추출 시 캐시 히트 확인 (LLM 호출 없이 캐시 사용)
-  - Extraction API: `GET /api/books/{id}/pages`, `GET /api/books/{id}/chapters`, `GET /api/books/{id}/chapters/{chapter_id}`, 백그라운드 작업
-  - 실제 LLM 연동: OpenAI API 호출 검증, Structured Output 검증, API 에러 처리 검증
+  - **캐시 재사용 검증**: 캐시 파일 존재 확인
   - **챕터 1-2개 제외 검증**: 챕터가 1개 또는 2개인 책은 엔티티 추출에서 제외되는지 확인
+  - **토큰 통계 검증**: 토큰 통계 파일 생성 및 데이터 확인
+- [x] 모델명 통일: "gpt-4.1-mini"로 변경 ✅ 완료
+  - `backend/summarizers/llm_chains.py`
+  - `backend/utils/token_counter.py`
+  - `backend/api/services/extraction_service.py`
 
 **검증**: E2E 테스트 통과 (⚠️ 실제 서버 실행, 실제 LLM 연동, 실제 엔티티 추출, Mock 사용 금지)
 

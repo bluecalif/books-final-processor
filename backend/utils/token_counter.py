@@ -14,13 +14,13 @@ logger = logging.getLogger(__name__)
 class TokenCounter:
     """토큰 계산 클래스"""
 
-    def __init__(self, model: str = "gpt-4o-mini"):
+    def __init__(self, model: str = "gpt-4.1-mini"):
         """
         Args:
-            model: 모델 이름 (gpt-4o-mini는 cl100k_base 인코딩 사용)
+            model: 모델 이름 (gpt-4.1-mini는 cl100k_base 인코딩 사용)
         """
         self.model = model
-        # gpt-4o-mini는 cl100k_base 인코딩 사용
+        # gpt-4.1-mini는 cl100k_base 인코딩 사용
         try:
             self.encoding = tiktoken.get_encoding("cl100k_base")
         except Exception as e:
@@ -87,8 +87,8 @@ class TokenCounter:
         if model is None:
             model = self.model
 
-        # gpt-4o-mini 가격 (2024년 기준, 1M tokens 기준)
-        if model == "gpt-4o-mini":
+        # gpt-4.1-mini 가격 (2024년 기준, 1M tokens 기준)
+        if model == "gpt-4.1-mini":
             input_price_per_1m = 0.4  # $0.4 per 1M input tokens
             output_price_per_1m = 1.6  # $1.6 per 1M output tokens
         else:
