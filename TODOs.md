@@ -293,12 +293,13 @@
   - 스키마 클래스 반환 함수: `get_page_schema_class()`, `get_chapter_schema_class()`
 
 #### 5.3 LLM Chains 구현
-- [ ] `backend/summarizers/llm_chains.py` 생성
+- [x] `backend/summarizers/llm_chains.py` 생성 ✅ 완료
   - `PageExtractionChain`: 페이지 엔티티 추출 (도메인별 스키마 사용)
     - OpenAI API 클라이언트 초기화
     - Structured Output 사용 (Pydantic 스키마 기반)
     - 도메인별 프롬프트 템플릿
     - 모델: `gpt-4o-mini` (권장), 온도: 0.3
+    - 텍스트 길이 제한 (4000자)
   - `ChapterStructuringChain`: 챕터 구조화 (페이지 결과 집계)
     - 페이지 엔티티 압축/집계 후 LLM 호출
     - 도메인별 프롬프트 템플릿
@@ -307,6 +308,7 @@
     - 입력 컨텍스트: `book_title`, `chapter_title`, `domain`, `raw_page_text` (또는 압축된 페이지 엔티티)
     - 출력 포맷: 도메인별 `*Page`/`*Chapter` 스키마 (JSON)
     - 할루시네이션 방지: 원문에 없는 내용 생성 금지
+    - 도메인별 추가 필드 지침 포함
 
 #### 5.4 Page Extractor 구현
 - [ ] `backend/summarizers/page_extractor.py` 생성
