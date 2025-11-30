@@ -69,8 +69,8 @@ def test_e2e_extraction_full_flow(e2e_client: httpx.Client, test_samples):
     # 3. 페이지 엔티티 추출 완료 대기
     max_wait_time = 1800  # 30분 (병렬 처리로 시간 단축 예상)
     start_time = time.time()
-        
-        while True:
+    
+    while True:
             elapsed = time.time() - start_time
             if elapsed > max_wait_time:
                 pytest.fail(
@@ -89,94 +89,94 @@ def test_e2e_extraction_full_flow(e2e_client: httpx.Client, test_samples):
                     f"Page extraction failed for book_id={book_id}, status={status}"
                 )
             
-            time.sleep(5)
+        time.sleep(5)
+    
+    # 4. 페이지 엔티티 검증
+    response = e2e_client.get(f"/api/books/{book_id}/pages")
+    assert response.status_code == 200
+    page_entities = response.json()
+    
+    assert len(page_entities) > 0, f"No page entities found for book_id={book_id}"
+    
+    # 첫 번째 페이지 엔티티 상세 검증
+    first_page = page_entities[0]
+    assert "structured_data" in first_page, "structured_data field missing"
+    assert first_page["structured_data"] is not None, "structured_data is None"
+    
+    structured_data = first_page["structured_data"]
+    assert "page_summary" in structured_data, "page_summary field missing"
+    assert "concepts" in structured_data, "concepts field missing"
+    assert "events" in structured_data, "events field missing"
+    
+    print(f"[TEST] Page entities validated: {len(page_entities)} pages")
+    
+    # 5. 챕터 구조화 시작 (백그라운드 작업)
+    print(f"[TEST] Starting chapter structuring for book_id={book_id}...")
+    response = e2e_client.post(f"/api/books/{book_id}/extract/chapters")
+    assert response.status_code == 200
+    assert response.json()["status"] == "processing"
+    
+    # 6. 챕터 구조화 완료 대기
+    start_time = time.time()
+    
+    while True:
+        elapsed = time.time() - start_time
+        if elapsed > max_wait_time:
+            pytest.fail(
+                f"Chapter structuring timeout after {max_wait_time} seconds for book_id={book_id}"
+            )
         
-        # 4. 페이지 엔티티 검증
-        response = e2e_client.get(f"/api/books/{book_id}/pages")
+        response = e2e_client.get(f"/api/books/{book_id}")
         assert response.status_code == 200
-        page_entities = response.json()
+        status = response.json()["status"]
         
-        assert len(page_entities) > 0, f"No page entities found for book_id={book_id}"
+        if status == "summarized":
+            print(f"[TEST] Chapter structuring completed for book_id={book_id}")
+            break
+        elif status in ["error_summarizing", "failed"]:
+            pytest.fail(
+                f"Chapter structuring failed for book_id={book_id}, status={status}"
+            )
         
-        # 첫 번째 페이지 엔티티 상세 검증
-        first_page = page_entities[0]
-        assert "structured_data" in first_page, "structured_data field missing"
-        assert first_page["structured_data"] is not None, "structured_data is None"
+        time.sleep(5)
+    
+    # 7. 챕터 구조화 결과 검증
+    response = e2e_client.get(f"/api/books/{book_id}/chapters")
+    assert response.status_code == 200
+    chapter_entities = response.json()
+    
+    assert len(chapter_entities) > 0, f"No chapter entities found for book_id={book_id}"
+    
+    # 첫 번째 챕터 엔티티 상세 검증
+    first_chapter = chapter_entities[0]
+    assert "structured_data" in first_chapter, "structured_data field missing"
+    assert first_chapter["structured_data"] is not None, "structured_data is None"
+    
+    chapter_structured_data = first_chapter["structured_data"]
+    assert "core_message" in chapter_structured_data, "core_message field missing"
+    assert "summary_3_5_sentences" in chapter_structured_data, "summary_3_5_sentences field missing"
+    assert "argument_flow" in chapter_structured_data, "argument_flow field missing"
+    
+    print(f"[TEST] Chapter entities validated: {len(chapter_entities)} chapters")
+    
+    # 8. 토큰 통계 파일 확인
+    token_stats_file = settings.output_dir / "token_stats" / f"book_{book_id}_tokens.json"
+    if token_stats_file.exists():
+        with open(token_stats_file, "r", encoding="utf-8") as f:
+            token_stats = json.load(f)
         
-        structured_data = first_page["structured_data"]
-        assert "page_summary" in structured_data, "page_summary field missing"
-        assert "concepts" in structured_data, "concepts field missing"
-        assert "events" in structured_data, "events field missing"
+        pages_stats = token_stats.get("pages", {})
+        chapters_stats = token_stats.get("chapters", {})
         
-        print(f"[TEST] Page entities validated: {len(page_entities)} pages")
-        
-        # 5. 챕터 구조화 시작 (백그라운드 작업)
-        print(f"[TEST] Starting chapter structuring for book_id={book_id}...")
-        response = e2e_client.post(f"/api/books/{book_id}/extract/chapters")
-        assert response.status_code == 200
-        assert response.json()["status"] == "processing"
-        
-        # 6. 챕터 구조화 완료 대기
-        start_time = time.time()
-        
-        while True:
-            elapsed = time.time() - start_time
-            if elapsed > max_wait_time:
-                pytest.fail(
-                    f"Chapter structuring timeout after {max_wait_time} seconds for book_id={book_id}"
-                )
-            
-            response = e2e_client.get(f"/api/books/{book_id}")
-            assert response.status_code == 200
-            status = response.json()["status"]
-            
-            if status == "summarized":
-                print(f"[TEST] Chapter structuring completed for book_id={book_id}")
-                break
-            elif status in ["error_summarizing", "failed"]:
-                pytest.fail(
-                    f"Chapter structuring failed for book_id={book_id}, status={status}"
-                )
-            
-            time.sleep(5)
-        
-        # 7. 챕터 구조화 결과 검증
-        response = e2e_client.get(f"/api/books/{book_id}/chapters")
-        assert response.status_code == 200
-        chapter_entities = response.json()
-        
-        assert len(chapter_entities) > 0, f"No chapter entities found for book_id={book_id}"
-        
-        # 첫 번째 챕터 엔티티 상세 검증
-        first_chapter = chapter_entities[0]
-        assert "structured_data" in first_chapter, "structured_data field missing"
-        assert first_chapter["structured_data"] is not None, "structured_data is None"
-        
-        chapter_structured_data = first_chapter["structured_data"]
-        assert "core_message" in chapter_structured_data, "core_message field missing"
-        assert "summary_3_5_sentences" in chapter_structured_data, "summary_3_5_sentences field missing"
-        assert "argument_flow" in chapter_structured_data, "argument_flow field missing"
-        
-        print(f"[TEST] Chapter entities validated: {len(chapter_entities)} chapters")
-        
-        # 8. 토큰 통계 파일 확인
-        token_stats_file = settings.output_dir / "token_stats" / f"book_{book_id}_tokens.json"
-        if token_stats_file.exists():
-            with open(token_stats_file, "r", encoding="utf-8") as f:
-                token_stats = json.load(f)
-            
-            pages_stats = token_stats.get("pages", {})
-            chapters_stats = token_stats.get("chapters", {})
-            
-            print(f"[TEST] Token stats for book_id={book_id}:")
-            print(f"  Pages: input={pages_stats.get('total_input_tokens', 0)}, "
-                  f"output={pages_stats.get('total_output_tokens', 0)}, "
-                  f"cost=${pages_stats.get('total_cost', 0.0):.4f}")
-            print(f"  Chapters: input={chapters_stats.get('total_input_tokens', 0)}, "
-                  f"output={chapters_stats.get('total_output_tokens', 0)}, "
-                  f"cost=${chapters_stats.get('total_cost', 0.0):.4f}")
-        else:
-            print(f"[WARNING] Token stats file not found: {token_stats_file}")
+        print(f"[TEST] Token stats for book_id={book_id}:")
+        print(f"  Pages: input={pages_stats.get('total_input_tokens', 0)}, "
+              f"output={pages_stats.get('total_output_tokens', 0)}, "
+              f"cost=${pages_stats.get('total_cost', 0.0):.4f}")
+        print(f"  Chapters: input={chapters_stats.get('total_input_tokens', 0)}, "
+              f"output={chapters_stats.get('total_output_tokens', 0)}, "
+              f"cost=${chapters_stats.get('total_cost', 0.0):.4f}")
+    else:
+        print(f"[WARNING] Token stats file not found: {token_stats_file}")
 
 
 @pytest.mark.e2e
