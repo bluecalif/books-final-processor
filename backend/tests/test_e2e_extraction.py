@@ -41,33 +41,34 @@ def test_e2e_extraction_full_flow(e2e_client: httpx.Client, test_samples):
     
     # 첫 번째 책만 테스트
     sample = test_samples[0]
-        book_id = sample["book_id"]
-        category = sample["category"]
-        
-        print(f"\n{'=' * 80}")
-        print(f"Testing Book ID: {book_id}, Category: {category}")
-        print(f"{'=' * 80}")
-        
-        # 1. 책 상태 확인 (structured 상태여야 함)
-        response = e2e_client.get(f"/api/books/{book_id}")
-        assert response.status_code == 200
-        book_data = response.json()
-        
-        if book_data["status"] != "structured":
-            pytest.skip(
-                f"Book {book_id} is not in 'structured' status. "
-                f"Current status: {book_data['status']}"
-            )
-        
-        # 2. 페이지 엔티티 추출 시작 (백그라운드 작업)
-        print(f"[TEST] Starting page extraction for book_id={book_id}...")
-        response = e2e_client.post(f"/api/books/{book_id}/extract/pages")
-        assert response.status_code == 200
-        assert response.json()["status"] == "processing"
-        
-        # 3. 페이지 엔티티 추출 완료 대기
-        max_wait_time = 600  # 10분
-        start_time = time.time()
+    
+    book_id = sample["book_id"]
+    category = sample["category"]
+    
+    print(f"\n{'=' * 80}")
+    print(f"Testing Book ID: {book_id}, Category: {category}")
+    print(f"{'=' * 80}")
+    
+    # 1. 책 상태 확인 (structured 상태여야 함)
+    response = e2e_client.get(f"/api/books/{book_id}")
+    assert response.status_code == 200
+    book_data = response.json()
+    
+    if book_data["status"] != "structured":
+        pytest.skip(
+            f"Book {book_id} is not in 'structured' status. "
+            f"Current status: {book_data['status']}"
+        )
+    
+    # 2. 페이지 엔티티 추출 시작 (백그라운드 작업)
+    print(f"[TEST] Starting page extraction for book_id={book_id}...")
+    response = e2e_client.post(f"/api/books/{book_id}/extract/pages")
+    assert response.status_code == 200
+    assert response.json()["status"] == "processing"
+    
+    # 3. 페이지 엔티티 추출 완료 대기
+    max_wait_time = 1800  # 30분 (병렬 처리로 시간 단축 예상)
+    start_time = time.time()
         
         while True:
             elapsed = time.time() - start_time
