@@ -11,7 +11,7 @@ Ground Truth 데이터: 90년생이 온다.pdf
 """
 
 GROUND_TRUTH = {
-    "book_title": "90년대생이온다",
+    "book_title": "90년생이 온다",
     "pdf_file": "90년생이 온다.pdf",
     "original_pages": 208,  # 원본 PDF 페이지 수
     "total_pages": 416,  # 양면 분리 후 페이지 수 (원본 * 2)

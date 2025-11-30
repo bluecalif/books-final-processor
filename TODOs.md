@@ -152,10 +152,14 @@
 
 **목표**: DB에서 이미 구조 분석이 완료된 도서를 제외
 
-- [ ] `backend/utils/processed_books_checker.py` 생성
+- [x] `backend/utils/processed_books_checker.py` 생성 ✅ 완료
+  - `ProcessedBooksChecker` 클래스: 이미 처리된 도서 확인
   - `get_processed_books(db_session)`: DB에서 `status >= 'structured'`인 도서 조회
-  - CSV의 `Title`과 DB의 `title` 매칭 로직
-  - 반환: 이미 처리된 도서 제목 리스트
+  - `get_processed_titles(db_session)`: 정규화된 제목 리스트 반환
+  - `is_book_processed(csv_title, db_session)`: CSV 제목이 이미 처리되었는지 확인
+  - `find_matching_processed_book()`: CSV 제목과 매칭되는 처리된 도서 찾기
+  - CSV의 `Title`과 DB의 `title` 매칭 로직 (제목 정규화 포함)
+  - 테스트 결과: 10개 처리 완료, CSV에서 9개 매칭 (처리 대기: 78개)
 
 **Git 커밋**: `git add .` → `git commit -m "[Phase 4] 이미 처리된 도서 확인 로직 구현"` → `git push origin main`
 

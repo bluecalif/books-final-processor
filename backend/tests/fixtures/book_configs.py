@@ -33,7 +33,7 @@ BOOK_CONFIGS = [
         "ground_truth_module": "ground_truth_3D프린터의모든것",
     },
     {
-        "name": "90년대생이온다",
+        "name": "90년생이 온다",
         "pdf_file": "90년생이 온다.pdf",
         "ground_truth_module": "ground_truth_90년대생이온다",
     },
