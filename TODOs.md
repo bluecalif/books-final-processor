@@ -321,14 +321,14 @@
   - **캐시 통합**: SummaryCacheManager 사용, 콘텐츠 해시 기반 캐시 키
 
 #### 5.5 Chapter Structurer 구현
-- [ ] `backend/summarizers/chapter_structurer.py` 생성
+- [x] `backend/summarizers/chapter_structurer.py` 생성 ✅ 완료
   - `ChapterStructurer` 클래스
-  - `structure_chapter(page_entities_list, book_context, domain, use_cache=True)` 메서드
-    - 입력: `page_entities_list` (페이지 엔티티 목록), `book_context`, `domain`
+  - `structure_chapter(page_entities_list, book_context, use_cache=True)` 메서드
+    - 입력: `page_entities_list` (페이지 엔티티 목록), `book_context`
     - 페이지 엔티티 집계/압축 (상위 N개만 추려서 LLM에 전달)
     - SummaryCacheManager 통합
     - 결과를 JSON으로 변환하여 반환
-  - **캐시 통합**: SummaryCacheManager 사용, 압축된 페이지 엔티티 해시 기반 캐시 키
+  - **캐시 통합**: SummaryCacheManager 사용, 압축된 페이지 엔티티 + 책 컨텍스트 해시 기반 캐시 키
 
 #### 5.6 Extraction Service 구현
 - [ ] `backend/api/services/extraction_service.py` 생성
