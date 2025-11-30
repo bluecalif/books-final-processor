@@ -358,6 +358,28 @@
   - `POST /api/books/{id}/extract/chapters`: 챕터 구조화 시작 (백그라운드 작업)
 - [x] `backend/api/main.py`에 라우터 등록 ✅ 완료
 
+#### 5.7.5 토큰 계산 및 모니터링 시스템
+- [ ] `backend/utils/token_counter.py` 생성
+  - `TokenCounter` 클래스: tiktoken 사용 (gpt-4o-mini는 cl100k_base 인코딩)
+  - `count_tokens(text: str) -> int`: 텍스트 토큰 수 계산
+  - `estimate_output_tokens(schema: BaseModel) -> int`: 출력 토큰 예상치 계산 (스키마 기반)
+  - `calculate_extraction_cost(input_tokens: int, output_tokens: int, model: str) -> float`: 비용 계산
+    - gpt-4o-mini 가격: 입력 $0.4/1M tokens, 출력 $1.6/1M tokens
+- [ ] `backend/api/services/extraction_service.py` 수정
+  - 페이지 엔티티 추출 시 토큰 계산 및 로깅
+    - 입력: system prompt + user prompt (페이지 텍스트 + 컨텍스트)
+    - 출력: 구조화된 JSON 예상 토큰 수
+  - 챕터 구조화 시 토큰 계산 및 로깅
+    - 입력: system prompt + user prompt (압축된 페이지 엔티티 + 컨텍스트)
+    - 출력: 구조화된 JSON 예상 토큰 수
+  - 토큰 통계를 메모리 또는 임시 파일에 저장
+- [ ] `backend/scripts/calculate_extraction_tokens.py` 생성
+  - Extraction Service 실행 후 토큰 통계 수집
+  - 책별 통계: 총 입력 토큰, 총 출력 토큰, 예상 비용
+  - 전체 통계: 모든 책 합계, 평균, 분야별 통계
+  - 리포트 생성: JSON 파일 및 텍스트 리포트
+- [ ] `pyproject.toml`에 tiktoken 의존성 추가
+
 #### 5.8 Extraction 모듈 테스트
 - [ ] **E2E 테스트** (⚠️ 실제 서버 실행, 실제 데이터만):
   - 전체 엔티티 추출 플로우: 구조 확정된 책 (챕터 3개 이상) → 페이지 엔티티 추출 (실제 OpenAI API) → 챕터 구조화, DB 저장 검증, 상태 변경 검증

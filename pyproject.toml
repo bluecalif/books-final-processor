@@ -18,6 +18,7 @@ python-dotenv = "^1.0.0"
 python-multipart = "^0.0.6"
 pypdf = "^3.17.0"
 beautifulsoup4 = "^4.12.2"
+tiktoken = "^0.5.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
