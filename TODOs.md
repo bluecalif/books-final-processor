@@ -331,24 +331,22 @@
   - **캐시 통합**: SummaryCacheManager 사용, 압축된 페이지 엔티티 + 책 컨텍스트 해시 기반 캐시 키
 
 #### 5.6 Extraction Service 구현
-- [ ] `backend/api/services/extraction_service.py` 생성
-  - 요약 생성 비즈니스 로직
-  - **PDF 파싱 캐시 사용**: `pdf_parser.parse_pdf(use_cache=True)` - 캐시된 파싱 결과 재사용
-  - 페이지 엔티티 추출:
+- [x] `backend/api/services/extraction_service.py` 생성 ✅ 완료
+  - `ExtractionService` 클래스
+  - `extract_pages(book_id)`: 페이지 엔티티 추출
     - 본문 페이지만 처리 (structure_data.main.pages 기준)
     - 각 페이지별로 `PageExtractor.extract_page_entities()` 호출
     - 결과를 `PageSummary.structured_data`에 JSON으로 저장
     - `summary_text`는 `page_summary` 필드에서 추출하여 저장 (하위 호환성)
-  - 챕터 구조화:
+    - `page_summarized` 상태로 업데이트
+  - `extract_chapters(book_id)`: 챕터 구조화
     - 각 챕터별로 해당 페이지 엔티티들을 집계
     - `ChapterStructurer.structure_chapter()` 호출
     - 결과를 `ChapterSummary.structured_data`에 JSON으로 저장
     - `summary_text`는 `summary_3_5_sentences` 필드에서 추출하여 저장 (하위 호환성)
-  - DB 저장 및 상태 업데이트:
-    - `page_summarized` 상태로 업데이트 (페이지 엔티티 추출 완료 시)
-    - `summarized` 상태로 업데이트 (챕터 구조화 완료 시)
+    - `summarized` 상태로 업데이트
+  - **PDF 파싱 캐시 사용**: `pdf_parser.parse_pdf(use_cache=True)` - 캐시된 파싱 결과 재사용
   - **⚠️ 챕터 1-2개인 책 제외**: 챕터가 1개 또는 2개인 책은 요약 생성에서 제외 (Phase 6.1에서 구조 분석 강화 후 처리)
-  - 백그라운드 작업 지원
 
 #### 5.7 Extraction API 구현
 - [ ] `backend/api/routers/extraction.py` 생성
