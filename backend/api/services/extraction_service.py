@@ -409,8 +409,20 @@ class ExtractionService:
                     self.db.add(chapter_summary)
 
                 structured_count += 1
+                
+                # 각 챕터당 진행 시간 출력
+                elapsed_time = time_module.time() - structuring_start_time
+                avg_time_per_chapter = elapsed_time / structured_count
+                remaining_chapters = total_chapters - structured_count
+                estimated_remaining_time = avg_time_per_chapter * remaining_chapters
+                
                 logger.info(
-                    f"[INFO] Structured chapter {chapter.order_index + 1}: {chapter.title}"
+                    f"[PROGRESS] Chapters: {structured_count}/{total_chapters} "
+                    f"({structured_count * 100 // total_chapters}%) | "
+                    f"Elapsed: {elapsed_time:.1f}s | "
+                    f"Avg: {avg_time_per_chapter:.2f}s/chapter | "
+                    f"Est. remaining: {estimated_remaining_time:.1f}s | "
+                    f"Chapter: {chapter.title}"
                 )
 
             except Exception as e:
