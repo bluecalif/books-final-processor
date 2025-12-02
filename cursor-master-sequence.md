@@ -17,6 +17,7 @@
 * **AGENTS.md**:  파일 복사 붙이기 (@/vibe-coding/) 파워쉘 명령어. 환경변수 관리. 
 * **Cursor rule**: PRD와 TODOs.md를 바탕으로 커서룰 작성을 요청 (명령어: @.cursor/rules)
 * **api-contract**:API-Contract의 sync는 매우 중요. 파일 복사한 후(@vibe-coding) 본 프로젝트에 맞게 각색하여 커서룰로 넣기 
+* **LLM 구조 output**: llm 사용시 구조화된 output을 쓰면 반드시 contract 정합성 점검
 * **캐시저장**: 파싱이나, LLM 호출 결과를 재사용위해 반드시 한번 호출한 결과는 캐싱 => **반드시 커서룰**
 * **test세션**: backend-frontend가 별도로 구성된 경우, backend에서 E2E 테스트가 완료되어야 합니다. 이를 위해 각 단계별 sub 테스트가 정합성있게 빠짐없이 되어 있는지 TODOs.md에 반영. **AGNETS.md에서 테스트 관련내용 숙지할 것을 요청**
 * **Git**: 깃 업데이트 및 실행을 안하는 경우가 있으니, 주의할 것

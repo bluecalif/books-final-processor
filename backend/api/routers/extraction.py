@@ -2,7 +2,7 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from backend.api.database import get_db
 from backend.api.services.extraction_service import ExtractionService
@@ -14,27 +14,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/books", tags=["extraction"])
 
 
-def _extract_pages_background(book_id: int):
+def _extract_pages_background(book_id: int, limit_pages: Optional[int] = None):
     """
     백그라운드에서 페이지 엔티티 추출 실행
     
     Args:
         book_id: 책 ID
+        limit_pages: 페이지 제한 (테스트용, None이면 전체)
     """
-    logger.info(f"[INFO] Starting background page extraction for book_id={book_id}")
+    logger.info(f"[INFO] Starting background page extraction for book_id={book_id}, limit_pages={limit_pages}")
     
     # 새로운 DB 세션 생성 (백그라운드 작업용)
     db = next(get_db())
     
     try:
         extraction_service = ExtractionService(db)
-        book = extraction_service.extract_pages(book_id)
+        book = extraction_service.extract_pages(book_id, limit_pages=limit_pages)
         logger.info(
             f"[INFO] Background page extraction completed: book_id={book_id}, "
             f"status={book.status}"
         )
     except Exception as e:
-        logger.error(f"[ERROR] Background page extraction failed: book_id={book_id}, error={e}")
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(
+            f"[ERROR] Background page extraction failed: book_id={book_id}, "
+            f"error={type(e).__name__}: {str(e)}\n"
+            f"Traceback:\n{error_trace}"
+        )
         # 에러 발생 시 상태 업데이트 (선택적)
         try:
             book = db.query(Book).filter(Book.id == book_id).first()
@@ -67,7 +74,13 @@ def _extract_chapters_background(book_id: int):
             f"status={book.status}"
         )
     except Exception as e:
-        logger.error(f"[ERROR] Background chapter structuring failed: book_id={book_id}, error={e}")
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(
+            f"[ERROR] Background chapter structuring failed: book_id={book_id}, "
+            f"error={type(e).__name__}: {str(e)}\n"
+            f"Traceback:\n{error_trace}"
+        )
         # 에러 발생 시 상태 업데이트 (선택적)
         try:
             book = db.query(Book).filter(Book.id == book_id).first()
@@ -221,6 +234,7 @@ def start_page_extraction(
     book_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    limit_pages: Optional[int] = None,
 ):
     """
     페이지 엔티티 추출 시작 (백그라운드 작업)
@@ -229,6 +243,7 @@ def start_page_extraction(
         book_id: 책 ID
         background_tasks: FastAPI 백그라운드 작업
         db: 데이터베이스 세션
+        limit_pages: 페이지 제한 (테스트용, None이면 전체 처리)
     
     Returns:
         작업 시작 메시지
@@ -246,13 +261,14 @@ def start_page_extraction(
         )
     
     # 백그라운드 작업 추가
-    background_tasks.add_task(_extract_pages_background, book_id)
+    background_tasks.add_task(_extract_pages_background, book_id, limit_pages)
     
-    logger.info(f"[INFO] Page extraction task queued for book_id={book_id}")
+    logger.info(f"[INFO] Page extraction task queued for book_id={book_id}, limit_pages={limit_pages}")
     
     return {
         "message": "Page extraction started",
         "book_id": book_id,
+        "limit_pages": limit_pages,
         "status": "processing",
     }
 

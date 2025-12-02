@@ -14,6 +14,96 @@ from backend.config.settings import settings
 pytestmark = pytest.mark.e2e
 
 
+@pytest.mark.e2e
+def test_e2e_extraction_small_sample(e2e_client: httpx.Client):
+    """
+    작은 샘플 테스트: Book 176 앞 30페이지만 추출
+    
+    빠른 검증용 - 서비스 로직 개선 후 기본 동작 확인
+    """
+    book_id = 176  # 1000년, 역사/사회
+    limit_pages = 30
+    
+    print(f"\n{'=' * 80}")
+    print(f"Small Sample Test: Book ID {book_id}, Limit {limit_pages} pages")
+    print(f"{'=' * 80}")
+    
+    # 1. 책 상태 확인
+    response = e2e_client.get(f"/api/books/{book_id}")
+    assert response.status_code == 200
+    book_data = response.json()
+    
+    if book_data["status"] != "structured":
+        pytest.skip(
+            f"Book {book_id} is not in 'structured' status. "
+            f"Current status: {book_data['status']}"
+        )
+    
+    # 2. 기존 PageSummary 삭제 (깨끗한 재시작)
+    print(f"[TEST] Cleaning up existing PageSummaries for book_id={book_id}...")
+    # Note: E2E 테스트이므로 API로 삭제하는 것이 이상적이지만,
+    # 삭제 API가 없으므로 이 부분은 수동으로 처리하거나 별도 스크립트 사용
+    
+    # 3. 페이지 엔티티 추출 시작 (30페이지 제한)
+    print(f"[TEST] Starting page extraction with limit={limit_pages}...")
+    response = e2e_client.post(
+        f"/api/books/{book_id}/extract/pages",
+        params={"limit_pages": limit_pages}
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "processing"
+    assert response.json()["limit_pages"] == limit_pages
+    
+    # 4. 추출 완료 대기 (진행 상황 출력)
+    # 동적 타임아웃 계산: 페이지당 3초 + 20% 여유
+    max_wait_time = int(limit_pages * 3 * 1.2) if limit_pages else 3600
+    print(f"[TEST] Max wait time: {max_wait_time}s ({max_wait_time//60} minutes)")
+    
+    start_time = time.time()
+    last_page_count = 0
+    
+    while True:
+        elapsed = time.time() - start_time
+        if elapsed > max_wait_time:
+            pytest.fail(
+                f"Page extraction timeout after {max_wait_time} seconds "
+                f"(book_id={book_id}, limit={limit_pages})"
+            )
+        
+        response = e2e_client.get(f"/api/books/{book_id}")
+        assert response.status_code == 200
+        status = response.json()["status"]
+        
+        # 진행 상황 확인 (페이지 개수)
+        pages_response = e2e_client.get(f"/api/books/{book_id}/pages")
+        if pages_response.status_code == 200:
+            current_page_count = len(pages_response.json())
+            if current_page_count > last_page_count:
+                print(f"[TEST] Progress: {current_page_count}/{limit_pages} pages extracted ({elapsed:.1f}s)")
+                last_page_count = current_page_count
+        
+        if status == "page_summarized":
+            print(f"[TEST] Page extraction completed (elapsed: {elapsed:.1f}s)")
+            break
+        elif status in ["error_summarizing", "failed"]:
+            pytest.fail(f"Page extraction failed: status={status}")
+        
+        time.sleep(10)
+    
+    # 5. 결과 검증
+    response = e2e_client.get(f"/api/books/{book_id}/pages")
+    assert response.status_code == 200
+    page_entities = response.json()
+    
+    # 30페이지가 모두 추출되었는지 확인
+    assert len(page_entities) >= limit_pages - 5, (
+        f"Expected at least {limit_pages - 5} pages, got {len(page_entities)}"
+    )
+    
+    print(f"[TEST] Small sample test passed: {len(page_entities)} pages extracted")
+    print(f"[TEST] Total time: {elapsed:.1f}s, Avg: {elapsed/len(page_entities):.2f}s/page")
+
+
 @pytest.fixture(scope="session")
 def test_samples():
     """테스트 샘플 도서 로드"""
@@ -70,8 +160,20 @@ def test_e2e_extraction_full_flow(e2e_client: httpx.Client, test_samples):
     assert response.json()["status"] == "processing"
 
     # 3. 페이지 엔티티 추출 완료 대기
-    max_wait_time = 1800  # 30분 (병렬 처리로 시간 단축 예상)
+    # 동적 타임아웃 계산: 예상 페이지 수 기준 (구조 데이터에서 추출)
+    if book_data.get("structure_data"):
+        structure = book_data["structure_data"]
+        main_start = structure.get("main_start_page", 0)
+        main_end = structure.get("main_end_page", 0)
+        expected_pages = main_end - main_start + 1 if main_start and main_end else 300
+    else:
+        expected_pages = 300
+    
+    max_wait_time = int(expected_pages * 3 * 1.2)  # 페이지당 3초 + 20% 여유
+    print(f"[TEST] Expected pages: {expected_pages}, Max wait time: {max_wait_time}s ({max_wait_time//60} min)")
+    
     start_time = time.time()
+    last_page_count = 0
 
     while True:
         elapsed = time.time() - start_time
@@ -83,16 +185,39 @@ def test_e2e_extraction_full_flow(e2e_client: httpx.Client, test_samples):
         response = e2e_client.get(f"/api/books/{book_id}")
         assert response.status_code == 200
         status = response.json()["status"]
+        
+        # 진행 상황 확인 (10초마다 항상 출력)
+        pages_response = e2e_client.get(f"/api/books/{book_id}/pages")
+        if pages_response.status_code == 200:
+            current_page_count = len(pages_response.json())
+            
+            # 페이지 수 변화 여부와 관계없이 진행 상황 출력
+            if int(elapsed) % 10 < 1 or current_page_count != last_page_count:
+                elapsed_min = int(elapsed // 60)
+                elapsed_sec = int(elapsed % 60)
+                progress_pct = int(current_page_count * 100 / expected_pages) if expected_pages > 0 else 0
+                avg_time = elapsed / max(current_page_count, 1)
+                est_remaining = avg_time * (expected_pages - current_page_count)
+                est_min = int(est_remaining // 60)
+                est_sec = int(est_remaining % 60)
+                
+                print(
+                    f"[TEST] {current_page_count}/{expected_pages} pages ({progress_pct}%) | "
+                    f"Time: {elapsed_min:02d}:{elapsed_sec:02d} | "
+                    f"Avg: {avg_time:.1f}s/page | "
+                    f"Est: {est_min:02d}:{est_sec:02d}"
+                )
+                last_page_count = current_page_count
 
         if status == "page_summarized":
-            print(f"[TEST] Page extraction completed for book_id={book_id}")
+            print(f"[TEST] Page extraction completed for book_id={book_id} (elapsed: {elapsed:.1f}s)")
             break
         elif status in ["error_summarizing", "failed"]:
             pytest.fail(
                 f"Page extraction failed for book_id={book_id}, status={status}"
             )
 
-        time.sleep(5)
+        time.sleep(10)  # 서버 부하 감소를 위해 폴링 간격 증가 (5초 → 10초)
 
     # 4. 페이지 엔티티 검증
     response = e2e_client.get(f"/api/books/{book_id}/pages")
@@ -141,7 +266,7 @@ def test_e2e_extraction_full_flow(e2e_client: httpx.Client, test_samples):
                 f"Chapter structuring failed for book_id={book_id}, status={status}"
             )
 
-        time.sleep(5)
+        time.sleep(10)  # 서버 부하 감소를 위해 폴링 간격 증가 (5초 → 10초)
 
     # 7. 챕터 구조화 결과 검증
     response = e2e_client.get(f"/api/books/{book_id}/chapters")

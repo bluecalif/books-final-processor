@@ -49,17 +49,18 @@ class ExtractionService:
         }
         logger.info("[INFO] ExtractionService initialized")
 
-    def extract_pages(self, book_id: int) -> Book:
+    def extract_pages(self, book_id: int, limit_pages: Optional[int] = None) -> Book:
         """
         페이지 엔티티 추출
 
         Args:
             book_id: 책 ID
+            limit_pages: 페이지 제한 (테스트용, None이면 전체 처리)
 
         Returns:
             업데이트된 Book 객체
         """
-        logger.info(f"[INFO] Starting page extraction for book_id={book_id}")
+        logger.info(f"[INFO] Starting page extraction for book_id={book_id}, limit_pages={limit_pages}")
 
         # 1. 책 조회
         book = self.db.query(Book).filter(Book.id == book_id).first()
@@ -163,6 +164,15 @@ class ExtractionService:
         if not available_main_pages:
             logger.error(f"[INPUT_VALIDATION] No available pages for extraction after matching")
             raise ValueError(f"No available pages for extraction: main_pages={len(main_pages)}, matched={len(available_main_pages)}")
+        
+        # 페이지 제한 적용 (테스트용)
+        if limit_pages is not None and limit_pages > 0:
+            original_count = len(available_main_pages)
+            available_main_pages = available_main_pages[:limit_pages]
+            logger.info(
+                f"[INPUT_VALIDATION] Page limit applied: {original_count} → {len(available_main_pages)} pages "
+                f"(limit_pages={limit_pages})"
+            )
 
         # 5. PageExtractor 초기화
         page_extractor = PageExtractor(domain, enable_cache=True)
@@ -196,6 +206,20 @@ class ExtractionService:
             if not page_text:
                 logger.warning(f"[WARNING] Page {page_number} has no raw_text")
                 return (page_number, None, None)
+            
+            # 빈 페이지 또는 너무 짧은 페이지 필터링
+            if len(page_text.strip()) < 50:
+                logger.warning(
+                    f"[WARNING] Page {page_number} text too short: {len(page_text)} chars, skipping"
+                )
+                return (page_number, None, None)
+            
+            # 긴 페이지 로깅 (4000자 초과 시 LLM에서 절단됨)
+            if len(page_text) > 4000:
+                logger.warning(
+                    f"[WARNING] Page {page_number} text will be truncated: "
+                    f"{len(page_text)} chars → 4000 chars"
+                )
 
             # 책 컨텍스트 생성
             chapter_info = self._get_chapter_info(book, page_number)
@@ -235,32 +259,66 @@ class ExtractionService:
                 return (page_number, structured_data, token_info)
 
             except Exception as e:
-                logger.error(f"[ERROR] Failed to extract page {page_number}: {e}")
+                error_type = type(e).__name__
+                logger.error(
+                    f"[ERROR] Failed to extract page {page_number}: "
+                    f"{error_type}: {str(e)[:200]}"
+                )
                 return (page_number, None, None)
 
         # 병렬 처리로 페이지 엔티티 추출
         import time as time_module
         extraction_start_time = time_module.time()
         extracted_count = 0
+        failed_count = 0
         total_pages = len(available_main_pages)
+        
+        # 챕터별 진행률 추적
+        chapter_progress = {}  # {chapter_id: {"extracted": 0, "total": 0}}
+        chapters = self.db.query(Chapter).filter(Chapter.book_id == book_id).order_by(Chapter.order_index).all()
+        for chapter in chapters:
+            chapter_pages = [p for p in available_main_pages if chapter.start_page <= p <= chapter.end_page]
+            chapter_progress[chapter.id] = {
+                "chapter_number": chapter.order_index + 1,
+                "title": chapter.title,
+                "extracted": 0,
+                "total": len(chapter_pages),
+                "start_page": chapter.start_page,
+                "end_page": chapter.end_page,
+            }
         
         logger.info(
             f"[EXTRACTION_START] Starting page extraction: "
             f"total_pages={total_pages}, domain={domain}, "
-            f"parallel_workers=5"
+            f"parallel_workers=3, chapters={len(chapters)}"
         )
         
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
                 executor.submit(extract_single_page, page_number): page_number
                 for page_number in available_main_pages
             }
             
             for future in as_completed(futures):
-                page_number, structured_data, token_info = future.result()
+                try:
+                    page_number, structured_data, token_info = future.result()
+                except Exception as e:
+                    # future.result()에서 예외 발생 시 처리
+                    error_type = type(e).__name__
+                    logger.error(f"[ERROR] Future result failed: {error_type}: {str(e)[:200]}")
+                    failed_count += 1
+                    continue
                 
                 if structured_data is None:
+                    failed_count += 1
+                    logger.warning(f"[WARNING] Page {page_number} extraction failed")
                     continue
+                
+                # 챕터별 진행률 업데이트
+                for chapter_id, progress in chapter_progress.items():
+                    if progress["start_page"] <= page_number <= progress["end_page"]:
+                        progress["extracted"] += 1
+                        break
                 
                 # 토큰 통계 누적
                 if token_info:
@@ -295,25 +353,37 @@ class ExtractionService:
                     self.db.add(page_summary)
 
                 extracted_count += 1
+                processed_count = extracted_count + failed_count
                 
-                # 10페이지당 진행 시간 출력
-                if extracted_count % 10 == 0:
+                # 10페이지당 진행 상황 출력 (페이지 기준)
+                if processed_count % 10 == 0:
                     elapsed_time = time_module.time() - extraction_start_time
-                    avg_time_per_page = elapsed_time / extracted_count
-                    remaining_pages = total_pages - extracted_count
+                    avg_time_per_page = elapsed_time / processed_count
+                    remaining_pages = total_pages - processed_count
                     estimated_remaining_time = avg_time_per_page * remaining_pages
                     
                     logger.info(
-                        f"[PROGRESS] Pages: {extracted_count}/{total_pages} "
-                        f"({extracted_count * 100 // total_pages}%) | "
+                        f"[PROGRESS] Pages: {extracted_count} success, {failed_count} failed, "
+                        f"{processed_count}/{total_pages} total "
+                        f"({processed_count * 100 // total_pages}%) | "
                         f"Elapsed: {elapsed_time:.1f}s | "
                         f"Avg: {avg_time_per_page:.2f}s/page | "
                         f"Est. remaining: {estimated_remaining_time:.1f}s"
                     )
                 
-                # 주기적으로 커밋 (병렬 처리 중 데이터 손실 방지)
-                if extracted_count % 20 == 0:
-                    self.db.commit()
+                # 챕터별 진행률 출력 (챕터 완료 시)
+                for chapter_id, progress in chapter_progress.items():
+                    if progress["start_page"] <= page_number <= progress["end_page"]:
+                        if progress["extracted"] == progress["total"] and progress["total"] > 0:
+                            logger.info(
+                                f"[PROGRESS] Chapter {progress['chapter_number']} completed: "
+                                f"{progress['title']} "
+                                f"({progress['extracted']}/{progress['total']} pages)"
+                            )
+                        break
+                
+                # 중간 커밋 제거 (세션 상태 문제 방지)
+                # 병렬 처리는 빠르게 완료되므로 최종 커밋만 수행
 
         # 7. 상태 업데이트
         book.status = BookStatus.PAGE_SUMMARIZED
@@ -334,10 +404,17 @@ class ExtractionService:
         total_time = time_module.time() - extraction_start_time
         logger.info(
             f"[EXTRACTION_COMPLETE] Page extraction completed: "
-            f"extracted={extracted_count}/{total_pages} pages, "
+            f"success={extracted_count}, failed={failed_count}, total={total_pages} pages, "
             f"time={total_time:.1f}s, "
-            f"avg={total_time/max(extracted_count, 1):.2f}s/page"
+            f"avg={total_time/max(extracted_count + failed_count, 1):.2f}s/page"
         )
+        
+        # 챕터별 완료 통계
+        for chapter_id, progress in chapter_progress.items():
+            logger.info(
+                f"[CHAPTER_STATS] Chapter {progress['chapter_number']} ({progress['title']}): "
+                f"{progress['extracted']}/{progress['total']} pages extracted"
+            )
         
         # DB 저장 검증
         saved_count = self.db.query(PageSummary).filter(PageSummary.book_id == book_id).count()
@@ -346,6 +423,12 @@ class ExtractionService:
         if saved_count != extracted_count:
             logger.warning(
                 f"[OUTPUT_VALIDATION] Mismatch: extracted={extracted_count}, saved={saved_count}"
+            )
+        
+        if failed_count > 0:
+            logger.warning(
+                f"[OUTPUT_VALIDATION] {failed_count} pages failed extraction "
+                f"({failed_count * 100 // total_pages}% failure rate)"
             )
         
         return book

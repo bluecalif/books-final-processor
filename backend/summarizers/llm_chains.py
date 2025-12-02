@@ -5,6 +5,7 @@ OpenAI Structured Output을 사용하여 도메인별 스키마에 맞는 엔티
 """
 import json
 import logging
+import time
 from typing import Dict, Any, List, Optional
 from openai import OpenAI
 from backend.config.settings import settings
@@ -29,19 +30,22 @@ logger = logging.getLogger(__name__)
 class PageExtractionChain:
     """페이지 엔티티 추출 LLM Chain"""
 
-    def __init__(self, domain: str, api_key: Optional[str] = None):
+    def __init__(self, domain: str, api_key: Optional[str] = None, timeout: int = 60):
         """
         Args:
             domain: 도메인 코드 ("history", "economy", "humanities", "science")
             api_key: OpenAI API 키 (None이면 settings에서 가져옴)
+            timeout: OpenAI API 타임아웃 (초, 기본값: 60)
         """
         if api_key is None:
             api_key = settings.openai_api_key
-        self.client = OpenAI(api_key=api_key)
+        self.client = OpenAI(api_key=api_key, timeout=timeout)
         self.model = "gpt-4.1-mini"
         self.temperature = 0.3
         self.domain = domain
         self.schema_class = get_page_schema_class(domain)
+        self.timeout = timeout
+        self.max_retries = 3  # 최대 재시도 횟수
 
     def extract_entities(
         self, page_text: str, book_context: Dict[str, Any]
@@ -63,41 +67,60 @@ class PageExtractionChain:
 
         # 프롬프트 생성
         prompt = self._build_prompt(page_text, book_context)
-
-        try:
-            # JSON Schema 생성 및 additionalProperties 추가
-            json_schema = self.schema_class.model_json_schema()
-            # OpenAI Structured Output은 additionalProperties: false를 요구
-            _add_additional_properties_false(json_schema)
-            
-            # Structured Output으로 LLM 호출
-            response = self.client.beta.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": prompt["system"]},
-                    {"role": "user", "content": prompt["user"]},
-                ],
-                temperature=self.temperature,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": f"{self.domain}_page_extraction",
-                        "schema": json_schema,
-                        "strict": True,
+        
+        # JSON Schema 생성 및 additionalProperties 추가
+        json_schema = self.schema_class.model_json_schema()
+        # OpenAI Structured Output은 additionalProperties: false를 요구
+        _add_additional_properties_false(json_schema)
+        
+        # 재시도 로직 (지수 백오프)
+        last_error = None
+        for attempt in range(self.max_retries):
+            try:
+                # Structured Output으로 LLM 호출
+                response = self.client.beta.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": prompt["system"]},
+                        {"role": "user", "content": prompt["user"]},
+                    ],
+                    temperature=self.temperature,
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": f"{self.domain}_page_extraction",
+                            "schema": json_schema,
+                            "strict": True,
+                        },
                     },
-                },
-            )
+                )
 
-            # 응답 파싱 및 검증
-            response_text = response.choices[0].message.content
-            result = self.schema_class.model_validate_json(response_text)
+                # 응답 파싱 및 검증
+                response_text = response.choices[0].message.content
+                result = self.schema_class.model_validate_json(response_text)
 
-            logger.info(f"[INFO] Page entity extraction completed")
-            return result
+                logger.info(f"[INFO] Page entity extraction completed")
+                return result
 
-        except Exception as e:
-            logger.error(f"[ERROR] Page extraction failed: {e}")
-            raise
+            except Exception as e:
+                last_error = e
+                error_type = type(e).__name__
+                
+                if attempt < self.max_retries - 1:
+                    wait_time = 2 ** attempt  # 지수 백오프: 1, 2, 4초
+                    logger.warning(
+                        f"[WARNING] Page extraction attempt {attempt + 1}/{self.max_retries} failed: "
+                        f"{error_type}: {str(e)[:100]}, retrying in {wait_time}s..."
+                    )
+                    time.sleep(wait_time)
+                else:
+                    logger.error(
+                        f"[ERROR] Page extraction failed after {self.max_retries} attempts: "
+                        f"{error_type}: {str(e)[:200]}"
+                    )
+        
+        # 모든 재시도 실패
+        raise last_error
 
     def _build_prompt(self, page_text: str, book_context: Dict[str, Any]) -> Dict[str, str]:
         """
@@ -247,19 +270,22 @@ def _add_additional_properties_false(schema: Dict[str, Any]) -> None:
 class ChapterStructuringChain:
     """챕터 구조화 LLM Chain"""
 
-    def __init__(self, domain: str, api_key: Optional[str] = None):
+    def __init__(self, domain: str, api_key: Optional[str] = None, timeout: int = 60):
         """
         Args:
             domain: 도메인 코드 ("history", "economy", "humanities", "science")
             api_key: OpenAI API 키 (None이면 settings에서 가져옴)
+            timeout: OpenAI API 타임아웃 (초, 기본값: 60)
         """
         if api_key is None:
             api_key = settings.openai_api_key
-        self.client = OpenAI(api_key=api_key)
+        self.client = OpenAI(api_key=api_key, timeout=timeout)
         self.model = "gpt-4.1-mini"
         self.temperature = 0.3
         self.domain = domain
         self.schema_class = get_chapter_schema_class(domain)
+        self.timeout = timeout
+        self.max_retries = 3  # 최대 재시도 횟수
 
     def structure_chapter(
         self,
@@ -284,41 +310,60 @@ class ChapterStructuringChain:
 
         # 프롬프트 생성
         prompt = self._build_prompt(compressed_page_entities, book_context)
-
-        try:
-            # JSON Schema 생성 및 additionalProperties 추가
-            json_schema = self.schema_class.model_json_schema()
-            # OpenAI Structured Output은 additionalProperties: false를 요구
-            _add_additional_properties_false(json_schema)
-            
-            # Structured Output으로 LLM 호출
-            response = self.client.beta.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": prompt["system"]},
-                    {"role": "user", "content": prompt["user"]},
-                ],
-                temperature=self.temperature,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": f"{self.domain}_chapter_structuring",
-                        "schema": json_schema,
-                        "strict": True,
+        
+        # JSON Schema 생성 및 additionalProperties 추가
+        json_schema = self.schema_class.model_json_schema()
+        # OpenAI Structured Output은 additionalProperties: false를 요구
+        _add_additional_properties_false(json_schema)
+        
+        # 재시도 로직 (지수 백오프)
+        last_error = None
+        for attempt in range(self.max_retries):
+            try:
+                # Structured Output으로 LLM 호출
+                response = self.client.beta.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": prompt["system"]},
+                        {"role": "user", "content": prompt["user"]},
+                    ],
+                    temperature=self.temperature,
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": f"{self.domain}_chapter_structuring",
+                            "schema": json_schema,
+                            "strict": True,
+                        },
                     },
-                },
-            )
+                )
 
-            # 응답 파싱 및 검증
-            response_text = response.choices[0].message.content
-            result = self.schema_class.model_validate_json(response_text)
+                # 응답 파싱 및 검증
+                response_text = response.choices[0].message.content
+                result = self.schema_class.model_validate_json(response_text)
 
-            logger.info(f"[INFO] Chapter structuring completed")
-            return result
+                logger.info(f"[INFO] Chapter structuring completed")
+                return result
 
-        except Exception as e:
-            logger.error(f"[ERROR] Chapter structuring failed: {e}")
-            raise
+            except Exception as e:
+                last_error = e
+                error_type = type(e).__name__
+                
+                if attempt < self.max_retries - 1:
+                    wait_time = 2 ** attempt  # 지수 백오프: 1, 2, 4초
+                    logger.warning(
+                        f"[WARNING] Chapter structuring attempt {attempt + 1}/{self.max_retries} failed: "
+                        f"{error_type}: {str(e)[:100]}, retrying in {wait_time}s..."
+                    )
+                    time.sleep(wait_time)
+                else:
+                    logger.error(
+                        f"[ERROR] Chapter structuring failed after {self.max_retries} attempts: "
+                        f"{error_type}: {str(e)[:200]}"
+                    )
+        
+        # 모든 재시도 실패
+        raise last_error
 
     def _build_prompt(
         self,

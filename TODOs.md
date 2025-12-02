@@ -15,7 +15,7 @@
 
 ## 프로젝트 현재 상황
 
-### 전체 진행률: 약 87% (Phase 1, Phase 2, Phase 3, Phase 4 완료, Phase 5 85% 진행 중)
+### 전체 진행률: 약 90% (Phase 1, Phase 2, Phase 3, Phase 4 완료, Phase 5 90% 진행 중)
 
 | Phase | 제목 | 진행률 | 상태 |
 |-------|------|-------|------|
@@ -23,7 +23,7 @@
 | Phase 2 | PDF 파싱 모듈 (Upstage API 연동) | 100% | 완료 |
 | Phase 3 | 구조 분석 모듈 | 100% | 완료 |
 | Phase 4 | 대량 도서 처리 프레임 단계 | 100% | 완료 |
-| Phase 5 | 내용 추출 및 요약 모듈 | 85% | 진행 중 (5.8 테스트 단계) |
+| Phase 5 | 내용 추출 및 요약 모듈 | 90% | 진행 중 (5.8 서비스 개선 완료, 테스트 대기) |
 | Phase 6 | 통합 및 테스트 | 0% | 미시작 |
 
 ## Git 저장소 정보
@@ -100,6 +100,13 @@
 - 캐시 재사용 검증 통과 (Upstage API 호출 없음)
 
 **완료**: 3.8 도서 텍스트 파일 정리 테스트 ✅
+
+**⚠️ 참고 (파이프라인 정합성)**:
+- 이 단계는 **메인 파이프라인의 일부가 아님**
+- Phase 5 엔티티 추출은 `data/output/text/` 파일을 사용하지 않음
+- 대신 **캐시에서 직접 raw_text를 재생성**하여 사용
+- `data/output/text/` 파일은 **API 엔드포인트** `GET /api/books/{id}/text` **용도로만 제공**
+- 프론트엔드가 없으므로 실제 사용 빈도는 낮음
 
 ---
 
@@ -333,8 +340,17 @@
 #### 5.6 Extraction Service 구현
 - [x] `backend/api/services/extraction_service.py` 생성 ✅ 완료
   - `ExtractionService` 클래스
+  - **입력 데이터 흐름** (중요):
+    1. `Book.structure_data` (DB): 본문 페이지 범위 (main_start_page ~ main_end_page)
+    2. `data/cache/upstage/{hash}.json`: Upstage API 파싱 결과 (캐시)
+    3. `PDFParser.parse_pdf(use_cache=True)`: 캐시에서 elements 로드 → raw_text 생성
+    4. ⚠️ **`data/output/text/` 파일은 사용하지 않음** (캐시에서 직접 생성)
   - `extract_pages(book_id)`: 페이지 엔티티 추출
-    - 본문 페이지만 처리 (structure_data.main.pages 기준)
+    - 본문 페이지만 처리 (structure_data 기준)
+    - 병렬 처리 (ThreadPoolExecutor, workers=3)
+    - 중간 커밋 (10페이지마다)
+    - 페이지 기준 진행률 표시 (성공/실패/전체)
+    - 챕터 기준 진행률 표시 (챕터 완료 시)
     - 각 페이지별로 `PageExtractor.extract_page_entities()` 호출
     - 결과를 `PageSummary.structured_data`에 JSON으로 저장
     - `summary_text`는 `page_summary` 필드에서 추출하여 저장 (하위 호환성)
@@ -397,80 +413,52 @@
   - `backend/utils/token_counter.py`
   - `backend/api/services/extraction_service.py`
 
-**⚠️ 현재 진행 상황 (2025-11-30)**:
+**⚠️ 현재 진행 상황 (2025-12-02, 서비스 로직 개선 완료)**:
 
-**해결 완료된 사항**:
+**2025-11-30 테스트 결과 분석**:
 1. ✅ **OpenAI Structured Output 스키마 오류 수정 완료**
    - 문제: OpenAI API가 `additionalProperties: false`와 모든 필드를 `required` 배열에 포함하도록 요구
    - 해결: `backend/summarizers/llm_chains.py`에 `_add_additional_properties_false()` 함수 추가
-     - 모든 객체 타입에 `additionalProperties: false` 추가
-     - 모든 `properties` 키를 `required` 배열에 포함
    - 검증: 스키마 수정 후 OpenAI API 호출 성공 (HTTP 200 OK)
 
 2. ✅ **API 응답 정상 확인**
    - OpenAI API 호출: 모두 성공 (HTTP 200 OK)
    - 구조화된 데이터 생성: 정상 작동
-   - 캐시 저장: 정상 작동 (`Cached page extraction result` 로그 확인)
+   - 캐시 저장: 정상 작동
    - Pydantic 모델 검증: `model_validate_json()` 통과
 
-3. ✅ **병렬 처리 구현 완료**
-   - `ThreadPoolExecutor` 사용 (max_workers=5)
-   - 진행 상황 로깅: 10페이지당 출력
-   - 주기적 커밋: 20페이지당 DB 커밋
+3. ⚠️ **테스트 미완료 (300/388 페이지만 저장)**
+   - Book ID 176, 77% 완료 후 중단
+   - 원인: OpenAI API 응답 지연, 병렬 처리 과부하, 테스트 폴링 간섭
 
-**현재 진행 중인 작업**:
-- **테스트 실행 중**: Book ID 176 (1000년, 역사/사회 도메인)
-- **진행률**: 약 36% (140/388 페이지 완료, 로그 기준 23:29:17)
-- **예상 남은 시간**: 약 6분 (평균 1.4초/페이지)
-- **테스트 타임아웃**: 1800초 (30분) - 충분함
+**2025-12-02 서비스 로직 개선 완료**:
+1. ✅ **병렬 처리 최적화**
+   - max_workers: 5 → 3 (리소스 사용 감소)
+   - 중간 커밋: 20 → 10페이지 (데이터 손실 최소화)
 
-**확인된 문제점**:
-1. ⚠️ **최종 완료 로그 부재**
-   - `EXTRACTION_COMPLETE` 로그가 보이지 않음
-   - `OUTPUT_VALIDATION` 로그가 보이지 않음
-   - 추출이 완료되었는지, DB 저장이 완료되었는지 확인 필요
+2. ✅ **에러 처리 강화**
+   - 구체적인 에러 타입 로깅
+   - 실패한 페이지 카운트 추적
+   - 4000자 초과 페이지 경고 로깅
+   - 빈 페이지 필터링 (50자 미만)
 
-2. ⚠️ **테스트 타임아웃 가능성**
-   - 테스트가 30분 타임아웃으로 설정되어 있으나, 실제로는 완료 전에 타임아웃될 수 있음
-   - 서버 로그에서 추출이 완료되었는지 확인 필요
+3. ✅ **진행 상황 표시 개선**
+   - 페이지 기준 진행률: 성공/실패/전체 카운트 분리
+   - 챕터 기준 진행률: 각 챕터 완료 시 통계 표시
+   - 최종 통계: 챕터별 추출 페이지 수
 
-**내일 시작할 때 해야 할 일**:
+4. ✅ **OpenAI API 안정성 개선**
+   - 타임아웃 설정: 60초
+   - 재시도 로직: 최대 3회, 지수 백오프 (1, 2, 4초)
+   - 에러 타입별 로깅
 
-1. **서버 로그 확인** (최우선):
-   ```powershell
-   # 최신 서버 로그 확인
-   Get-ChildItem -Path "data\test_results" -Filter "server_*.log" | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object { Get-Content $_.FullName -Tail 100 -Encoding UTF8 }
-   ```
-   - `EXTRACTION_COMPLETE` 로그 확인
-   - `OUTPUT_VALIDATION` 로그 확인
-   - 최종 상태 확인 (완료 여부, 에러 여부)
+5. ✅ **테스트 개선**
+   - 폴링 간격: 5 → 10초 (서버 부하 감소)
 
-2. **DB 상태 확인**:
-   ```powershell
-   poetry run python -c "from backend.api.database import SessionLocal; from backend.api.models.book import Book, PageSummary; db = SessionLocal(); book = db.query(Book).filter(Book.id == 176).first(); page_count = db.query(PageSummary).filter(PageSummary.book_id == 176).count(); print(f'Book 176 status: {book.status}'); print(f'PageSummaries count: {page_count}'); db.close()"
-   ```
-   - Book 176의 상태 확인 (`page_summarized` 또는 `error_summarizing`)
-   - PageSummary 레코드 수 확인 (예상: 388개)
-   - `structured_data` 필드에 데이터가 저장되었는지 확인
-
-3. **추출 완료 여부 확인**:
-   - 추출이 완료되었다면: 챕터 구조화 테스트 진행
-   - 추출이 미완료되었다면: 백그라운드 작업이 계속 실행 중인지 확인
-   - 추출이 실패했다면: 에러 로그 확인 및 재시도
-
-4. **문제 해결 방안**:
-   - **타임아웃 문제**: 테스트 타임아웃을 늘리거나, 백그라운드 작업 완료를 더 정확하게 감지
-   - **완료 로그 부재**: `extraction_service.py`의 최종 로그가 출력되는지 확인
-   - **DB 저장 실패**: DB 커밋이 제대로 되었는지 확인
-
-5. **테스트 재실행** (필요시):
-   - 추출이 완료되지 않았다면 테스트 재실행
-   - 또는 API를 직접 호출하여 추출 완료 대기
-
-**참고 파일**:
-- 서버 로그: `data/test_results/server_*.log`
-- 테스트 로그: `data/test_results/extraction_test_*.log`
-- 토큰 통계: `data/output/token_stats/book_176_tokens.json` (생성 여부 확인)
+**다음 단계**:
+- [ ] 서비스 로직 개선 후 테스트 재실행
+- [ ] Book 176 재추출 (기존 300개 삭제 후)
+- [ ] 더 작은 샘플로 먼저 검증 (100페이지 미만)
 
 **검증**: E2E 테스트 통과 (⚠️ 실제 서버 실행, 실제 LLM 연동, 실제 엔티티 추출, Mock 사용 금지)
 
