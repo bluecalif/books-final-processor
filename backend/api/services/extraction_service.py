@@ -502,6 +502,10 @@ class ExtractionService:
             Returns:
                 (chapter, structured_data, token_info) 또는 (chapter, None, None) (실패 시)
             """
+            # 각 스레드는 자신만의 DB 세션을 사용해야 함
+            from backend.api.database import SessionLocal
+            thread_db = SessionLocal()
+            
             try:
                 # 챕터의 페이지 범위 확인
                 chapter_pages = list(range(chapter.start_page, chapter.end_page + 1))
@@ -510,7 +514,7 @@ class ExtractionService:
                 page_entities_list = []
                 for page_number in chapter_pages:
                     page_summary = (
-                        self.db.query(PageSummary)
+                        thread_db.query(PageSummary)
                         .filter(
                             PageSummary.book_id == book_id,
                             PageSummary.page_number == page_number,
@@ -574,6 +578,8 @@ class ExtractionService:
                     f"{error_type}: {str(e)[:200]}"
                 )
                 return (chapter, None, None)
+            finally:
+                thread_db.close()
         
         # 병렬 처리로 챕터 구조화
         logger.info(

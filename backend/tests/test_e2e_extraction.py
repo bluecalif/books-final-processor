@@ -107,17 +107,27 @@ def test_e2e_extraction_small_sample(e2e_client: httpx.Client):
 @pytest.fixture(scope="session")
 def test_samples():
     """테스트 샘플 도서 로드"""
-    samples_file = settings.output_dir / "test_samples" / "selected_samples.json"
+    samples_file = settings.output_dir / "test_samples" / "test_books_list.json"
 
     if not samples_file.exists():
         pytest.skip(
-            f"Test samples file not found: {samples_file}. Run select_test_samples.py first."
+            f"Test samples file not found: {samples_file}. Run select_test_books.py first."
         )
 
     with open(samples_file, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    return data.get("samples", [])
+    # 분야별 딕셔너리를 리스트로 변환
+    samples = []
+    for category, book_info in data.items():
+        samples.append({
+            "book_id": book_info["book_id"],
+            "title": book_info["title"],
+            "chapter_count": book_info["chapter_count"],
+            "category": category,
+        })
+    
+    return samples
 
 
 @pytest.mark.e2e
