@@ -148,16 +148,14 @@ class HistoryChapter(BaseChapterSchema):
     """역사/사회 챕터 스키마"""
 
     timeline: List[str] = Field(
-        default_factory=list, 
-        description="타임라인 (예: '1000년: 정화의 항해', '1433년: 명나라 항해 종료')"
+        default_factory=list,
+        description="타임라인 (예: '1000년: 정화의 항해', '1433년: 명나라 항해 종료')",
     )
     geo_map: str = Field(
-        default="", 
-        description="지리적 맵 (텍스트 설명: 주요 지역 및 경로)"
+        default="", description="지리적 맵 (텍스트 설명: 주요 지역 및 경로)"
     )
     structure_layer: str = Field(
-        default="", 
-        description="정치/경제/사회/문화 구조 요약 (텍스트 설명)"
+        default="", description="정치/경제/사회/문화 구조 요약 (텍스트 설명)"
     )
 
 
@@ -194,8 +192,7 @@ class ScienceChapter(BaseChapterSchema):
         default_factory=list, description="다루는 문제 영역"
     )
     impact_map: str = Field(
-        default="", 
-        description="이해관계자별 영향 (텍스트 설명: 정부, 기업, 개인 등)"
+        default="", description="이해관계자별 영향 (텍스트 설명: 정부, 기업, 개인 등)"
     )
     ethics_issues: List[str] = Field(default_factory=list, description="윤리/사회 논쟁")
     future_scenarios: List[str] = Field(
