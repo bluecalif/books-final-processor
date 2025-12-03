@@ -290,10 +290,10 @@ class ExtractionService:
         logger.info(
             f"[EXTRACTION_START] Starting page extraction: "
             f"total_pages={total_pages}, domain={domain}, "
-            f"parallel_workers=3, chapters={len(chapters)}"
+            f"parallel_workers=5, chapters={len(chapters)}"
         )
         
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {
                 executor.submit(extract_single_page, page_number): page_number
                 for page_number in available_main_pages
@@ -435,7 +435,7 @@ class ExtractionService:
 
     def extract_chapters(self, book_id: int) -> Book:
         """
-        챕터 구조화
+        챕터 구조화 (병렬 처리)
 
         Args:
             book_id: 책 ID
@@ -488,49 +488,56 @@ class ExtractionService:
         # 스키마 클래스 가져오기 (출력 토큰 예상치 계산용)
         chapter_schema_class = get_chapter_schema_class(domain)
 
-        # 5. 각 챕터 구조화
+        # 5. 각 챕터 구조화 (병렬 처리)
         import time as time_module
         structuring_start_time = time_module.time()
         structured_count = 0
+        failed_count = 0
         total_chapters = len(chapters)
         
-        for chapter in chapters:
-            # 챕터의 페이지 범위 확인
-            chapter_pages = list(range(chapter.start_page, chapter.end_page + 1))
-
-            # 해당 페이지들의 엔티티 가져오기
-            page_entities_list = []
-            for page_number in chapter_pages:
-                page_summary = (
-                    self.db.query(PageSummary)
-                    .filter(
-                        PageSummary.book_id == book_id,
-                        PageSummary.page_number == page_number,
-                    )
-                    .first()
-                )
-
-                if page_summary and page_summary.structured_data:
-                    # structured_data에 page_number 추가
-                    entity = page_summary.structured_data.copy()
-                    entity["page_number"] = page_number
-                    page_entities_list.append(entity)
-
-            if not page_entities_list:
-                logger.warning(
-                    f"[WARNING] Chapter {chapter.id} has no page entities, skipping"
-                )
-                continue
-
-            # 책 컨텍스트 생성
-            book_context = {
-                "book_title": book.title or "Unknown",
-                "chapter_title": chapter.title,
-                "chapter_number": chapter.order_index + 1,  # 1-based
-                "book_summary": "",  # TODO: Book 모델에 book_summary 필드 추가 시 사용
-            }
-
+        def extract_single_chapter(chapter: Chapter) -> Tuple[Chapter, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+            """
+            단일 챕터 구조화 (병렬 처리용)
+            
+            Returns:
+                (chapter, structured_data, token_info) 또는 (chapter, None, None) (실패 시)
+            """
             try:
+                # 챕터의 페이지 범위 확인
+                chapter_pages = list(range(chapter.start_page, chapter.end_page + 1))
+
+                # 해당 페이지들의 엔티티 가져오기
+                page_entities_list = []
+                for page_number in chapter_pages:
+                    page_summary = (
+                        self.db.query(PageSummary)
+                        .filter(
+                            PageSummary.book_id == book_id,
+                            PageSummary.page_number == page_number,
+                        )
+                        .first()
+                    )
+
+                    if page_summary and page_summary.structured_data:
+                        # structured_data에 page_number 추가
+                        entity = page_summary.structured_data.copy()
+                        entity["page_number"] = page_number
+                        page_entities_list.append(entity)
+
+                if not page_entities_list:
+                    logger.warning(
+                        f"[WARNING] Chapter {chapter.id} has no page entities, skipping"
+                    )
+                    return (chapter, None, None)
+
+                # 책 컨텍스트 생성
+                book_context = {
+                    "book_title": book.title or "Unknown",
+                    "chapter_title": chapter.title,
+                    "chapter_number": chapter.order_index + 1,  # 1-based
+                    "book_summary": "",  # TODO: Book 모델에 book_summary 필드 추가 시 사용
+                }
+
                 # 토큰 계산 (프롬프트 재생성)
                 compressed_pages = self._compress_page_entities(page_entities_list, domain)
                 prompt = self._build_chapter_prompt(compressed_pages, book_context, domain)
@@ -542,11 +549,11 @@ class ExtractionService:
                 )
                 cost = self.token_counter.calculate_cost(input_tokens, output_tokens)
                 
-                # 통계 누적
-                self.token_stats["chapters"]["total_input_tokens"] += input_tokens
-                self.token_stats["chapters"]["total_output_tokens"] += output_tokens
-                self.token_stats["chapters"]["total_cost"] += cost
-                self.token_stats["chapters"]["chapter_count"] += 1
+                token_info = {
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost": cost,
+                }
                 
                 logger.info(
                     f"[TOKEN] Chapter {chapter.order_index + 1}: input={input_tokens}, "
@@ -558,6 +565,50 @@ class ExtractionService:
                     page_entities_list, book_context, use_cache=True
                 )
 
+                return (chapter, structured_data, token_info)
+
+            except Exception as e:
+                error_type = type(e).__name__
+                logger.error(
+                    f"[ERROR] Failed to structure chapter {chapter.id}: "
+                    f"{error_type}: {str(e)[:200]}"
+                )
+                return (chapter, None, None)
+        
+        # 병렬 처리로 챕터 구조화
+        logger.info(
+            f"[EXTRACTION_START] Starting chapter structuring: "
+            f"total_chapters={total_chapters}, domain={domain}, parallel_workers=5"
+        )
+        
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                executor.submit(extract_single_chapter, chapter): chapter
+                for chapter in chapters
+            }
+            
+            for future in as_completed(futures):
+                try:
+                    chapter, structured_data, token_info = future.result()
+                except Exception as e:
+                    # future.result()에서 예외 발생 시 처리
+                    error_type = type(e).__name__
+                    logger.error(f"[ERROR] Future result failed: {error_type}: {str(e)[:200]}")
+                    failed_count += 1
+                    continue
+                
+                if structured_data is None:
+                    failed_count += 1
+                    logger.warning(f"[WARNING] Chapter {chapter.id} structuring failed")
+                    continue
+                
+                # 토큰 통계 누적
+                if token_info:
+                    self.token_stats["chapters"]["total_input_tokens"] += token_info["input_tokens"]
+                    self.token_stats["chapters"]["total_output_tokens"] += token_info["output_tokens"]
+                    self.token_stats["chapters"]["total_cost"] += token_info["cost"]
+                    self.token_stats["chapters"]["chapter_count"] += 1
+                
                 # ChapterSummary 저장 또는 업데이트
                 chapter_summary = (
                     self.db.query(ChapterSummary)
@@ -583,25 +634,23 @@ class ExtractionService:
                     self.db.add(chapter_summary)
 
                 structured_count += 1
+                processed_count = structured_count + failed_count
                 
-                # 각 챕터당 진행 시간 출력
+                # 각 챕터 완료 시 진행 상황 출력
                 elapsed_time = time_module.time() - structuring_start_time
-                avg_time_per_chapter = elapsed_time / structured_count
-                remaining_chapters = total_chapters - structured_count
+                avg_time_per_chapter = elapsed_time / processed_count
+                remaining_chapters = total_chapters - processed_count
                 estimated_remaining_time = avg_time_per_chapter * remaining_chapters
                 
                 logger.info(
-                    f"[PROGRESS] Chapters: {structured_count}/{total_chapters} "
-                    f"({structured_count * 100 // total_chapters}%) | "
+                    f"[PROGRESS] Chapters: {structured_count} success, {failed_count} failed, "
+                    f"{processed_count}/{total_chapters} total "
+                    f"({processed_count * 100 // total_chapters}%) | "
                     f"Elapsed: {elapsed_time:.1f}s | "
                     f"Avg: {avg_time_per_chapter:.2f}s/chapter | "
                     f"Est. remaining: {estimated_remaining_time:.1f}s | "
                     f"Chapter: {chapter.title}"
                 )
-
-            except Exception as e:
-                logger.error(f"[ERROR] Failed to structure chapter {chapter.id}: {e}")
-                continue
 
         # 6. 상태 업데이트
         book.status = BookStatus.SUMMARIZED
@@ -618,9 +667,30 @@ class ExtractionService:
         )
         self._save_token_stats()
 
+        # 최종 검증 로그
+        total_time = time_module.time() - structuring_start_time
         logger.info(
-            f"[INFO] Chapter structuring completed: {structured_count}/{len(chapters)} chapters structured"
+            f"[EXTRACTION_COMPLETE] Chapter structuring completed: "
+            f"success={structured_count}, failed={failed_count}, total={total_chapters} chapters, "
+            f"time={total_time:.1f}s, "
+            f"avg={total_time/max(structured_count + failed_count, 1):.2f}s/chapter"
         )
+        
+        # DB 저장 검증
+        saved_count = self.db.query(ChapterSummary).filter(ChapterSummary.book_id == book_id).count()
+        logger.info(f"[OUTPUT_VALIDATION] ChapterSummaries saved to DB: {saved_count} records")
+        
+        if saved_count != structured_count:
+            logger.warning(
+                f"[OUTPUT_VALIDATION] Mismatch: structured={structured_count}, saved={saved_count}"
+            )
+        
+        if failed_count > 0:
+            logger.warning(
+                f"[OUTPUT_VALIDATION] {failed_count} chapters failed structuring "
+                f"({failed_count * 100 // total_chapters}% failure rate)"
+            )
+        
         return book
 
     def _get_chapter_info(self, book: Book, page_number: int) -> Dict[str, Any]:
