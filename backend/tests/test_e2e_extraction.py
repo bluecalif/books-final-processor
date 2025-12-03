@@ -254,8 +254,26 @@ def test_e2e_extraction_full_flow(e2e_client: httpx.Client, test_samples):
     assert response.status_code == 200
     assert response.json()["status"] == "processing"
 
-    # 6. 챕터 구조화 완료 대기
+    # 6. 챕터 구조화 완료 대기 (진행 상황 출력)
+    # 전체 챕터 수 조회 (Book의 structure_data에서)
+    response = e2e_client.get(f"/api/books/{book_id}")
+    assert response.status_code == 200
+    book_data = response.json()
+    
+    # 챕터 수 확인
+    expected_chapters = 0
+    if book_data.get("structure_data"):
+        structure = book_data["structure_data"]
+        if "chapters" in structure:
+            expected_chapters = len(structure["chapters"])
+    
+    if expected_chapters == 0:
+        expected_chapters = 10  # 기본값
+    
+    print(f"[TEST] Expected chapters: {expected_chapters}, Max wait time: {max_wait_time}s ({max_wait_time//60} min)")
+    
     start_time = time.time()
+    last_chapter_count = 0
 
     while True:
         elapsed = time.time() - start_time
@@ -267,9 +285,32 @@ def test_e2e_extraction_full_flow(e2e_client: httpx.Client, test_samples):
         response = e2e_client.get(f"/api/books/{book_id}")
         assert response.status_code == 200
         status = response.json()["status"]
+        
+        # 진행 상황 확인 (챕터 개수)
+        chapters_response = e2e_client.get(f"/api/books/{book_id}/chapters")
+        if chapters_response.status_code == 200:
+            current_chapter_count = len(chapters_response.json())
+            
+            # 10초마다 또는 챕터 수 변화 시에만 진행 상황 출력
+            if int(elapsed) % 10 < 1 or current_chapter_count != last_chapter_count:
+                elapsed_min = int(elapsed // 60)
+                elapsed_sec = int(elapsed % 60)
+                progress_pct = int(current_chapter_count * 100 / expected_chapters) if expected_chapters > 0 else 0
+                avg_time = elapsed / max(current_chapter_count, 1)
+                est_remaining = avg_time * (expected_chapters - current_chapter_count)
+                est_min = int(est_remaining // 60)
+                est_sec = int(est_remaining % 60)
+                
+                print(
+                    f"[TEST] {current_chapter_count}/{expected_chapters} chapters ({progress_pct}%) | "
+                    f"Time: {elapsed_min:02d}:{elapsed_sec:02d} | "
+                    f"Avg: {avg_time:.1f}s/chapter | "
+                    f"Est: {est_min:02d}:{est_sec:02d}"
+                )
+                last_chapter_count = current_chapter_count
 
         if status == "summarized":
-            print(f"[TEST] Chapter structuring completed for book_id={book_id}")
+            print(f"[TEST] Chapter structuring completed for book_id={book_id} (elapsed: {elapsed:.1f}s)")
             break
         elif status in ["error_summarizing", "failed"]:
             pytest.fail(
