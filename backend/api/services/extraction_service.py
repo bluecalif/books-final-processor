@@ -483,13 +483,16 @@ class ExtractionService:
         if self.token_stats["book_id"] != book_id:
             # extract_pages가 실행되지 않은 경우 또는 다른 책인 경우
             self.token_stats["book_id"] = book_id
-            self.token_stats["pages"] = {
-                "total_input_tokens": 0,
-                "total_output_tokens": 0,
-                "total_cost": 0.0,
-                "page_count": 0,
-            }
+            # 페이지 통계가 이미 있으면 유지, 없으면 초기화
+            if "pages" not in self.token_stats or self.token_stats["pages"]["page_count"] == 0:
+                self.token_stats["pages"] = {
+                    "total_input_tokens": 0,
+                    "total_output_tokens": 0,
+                    "total_cost": 0.0,
+                    "page_count": 0,
+                }
         
+        # 챕터 통계만 초기화 (페이지 통계는 유지)
         self.token_stats["chapters"] = {
             "total_input_tokens": 0,
             "total_output_tokens": 0,
@@ -929,12 +932,30 @@ Remember: Only synthesize from the provided page entities. Do NOT invent."""
         return compressed
 
     def _save_token_stats(self) -> None:
-        """토큰 통계를 JSON 파일로 저장"""
+        """토큰 통계를 JSON 파일로 저장 (기존 파일과 병합)"""
         try:
             stats_dir = settings.output_dir / "token_stats"
             stats_dir.mkdir(parents=True, exist_ok=True)
             
             stats_file = stats_dir / f"book_{self.token_stats['book_id']}_tokens.json"
+            
+            # 기존 파일이 있으면 로드하여 병합
+            existing_stats = None
+            if stats_file.exists():
+                try:
+                    with open(stats_file, "r", encoding="utf-8") as f:
+                        existing_stats = json.load(f)
+                except Exception as e:
+                    logger.warning(f"[WARNING] Failed to load existing token stats: {e}")
+            
+            # 병합: 페이지 통계와 챕터 통계를 각각 유지
+            if existing_stats:
+                # 페이지 통계: 현재 값이 0이면 기존 값 사용
+                if self.token_stats["pages"]["page_count"] == 0 and existing_stats.get("pages"):
+                    self.token_stats["pages"] = existing_stats["pages"]
+                # 챕터 통계: 현재 값이 0이면 기존 값 사용
+                if self.token_stats["chapters"]["chapter_count"] == 0 and existing_stats.get("chapters"):
+                    self.token_stats["chapters"] = existing_stats["chapters"]
             
             with open(stats_file, "w", encoding="utf-8") as f:
                 json.dump(self.token_stats, f, ensure_ascii=False, indent=2)

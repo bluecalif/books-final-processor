@@ -30,12 +30,12 @@ logger = logging.getLogger(__name__)
 class PageExtractionChain:
     """페이지 엔티티 추출 LLM Chain"""
 
-    def __init__(self, domain: str, api_key: Optional[str] = None, timeout: int = 60):
+    def __init__(self, domain: str, api_key: Optional[str] = None, timeout: int = 120):
         """
         Args:
             domain: 도메인 코드 ("history", "economy", "humanities", "science")
             api_key: OpenAI API 키 (None이면 settings에서 가져옴)
-            timeout: OpenAI API 타임아웃 (초, 기본값: 60)
+            timeout: OpenAI API 타임아웃 (초, 기본값: 120)
         """
         if api_key is None:
             api_key = settings.openai_api_key
@@ -270,12 +270,12 @@ def _add_additional_properties_false(schema: Dict[str, Any]) -> None:
 class ChapterStructuringChain:
     """챕터 구조화 LLM Chain"""
 
-    def __init__(self, domain: str, api_key: Optional[str] = None, timeout: int = 60):
+    def __init__(self, domain: str, api_key: Optional[str] = None, timeout: int = 120):
         """
         Args:
             domain: 도메인 코드 ("history", "economy", "humanities", "science")
             api_key: OpenAI API 키 (None이면 settings에서 가져옴)
-            timeout: OpenAI API 타임아웃 (초, 기본값: 60)
+            timeout: OpenAI API 타임아웃 (초, 기본값: 120)
         """
         if api_key is None:
             api_key = settings.openai_api_key
