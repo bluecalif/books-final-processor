@@ -17,15 +17,16 @@ logger = logging.getLogger(__name__)
 class PageExtractor:
     """페이지 엔티티 추출기"""
 
-    def __init__(self, domain: str, enable_cache: bool = True):
+    def __init__(self, domain: str, enable_cache: bool = True, book_title: str = None):
         """
         Args:
             domain: 도메인 코드 ("history", "economy", "humanities", "science")
             enable_cache: 캐시 사용 여부
+            book_title: 책 제목 (캐시 폴더 분리용)
         """
         self.domain = domain
         self.chain = PageExtractionChain(domain)
-        self.cache_manager = SummaryCacheManager() if enable_cache else None
+        self.cache_manager = SummaryCacheManager(book_title=book_title) if enable_cache else None
         
         logger.info(
             f"[INFO] PageExtractor initialized: domain={domain}, cache={enable_cache}"

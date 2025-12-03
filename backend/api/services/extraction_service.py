@@ -174,8 +174,9 @@ class ExtractionService:
                 f"(limit_pages={limit_pages})"
             )
 
-        # 5. PageExtractor 초기화
-        page_extractor = PageExtractor(domain, enable_cache=True)
+        # 5. PageExtractor 초기화 (책 제목 전달하여 캐시 폴더 분리)
+        book_title = book.title or f"book_{book_id}"
+        page_extractor = PageExtractor(domain, enable_cache=True, book_title=book_title)
         
         # 토큰 통계 초기화
         self.token_stats["book_id"] = book_id
@@ -474,10 +475,21 @@ class ExtractionService:
 
         logger.info(f"[INFO] Domain: {domain} (category: {book.category})")
 
-        # 4. ChapterStructurer 초기화
-        chapter_structurer = ChapterStructurer(domain, enable_cache=True)
+        # 4. ChapterStructurer 초기화 (책 제목 전달하여 캐시 폴더 분리)
+        book_title = book.title or f"book_{book_id}"
+        chapter_structurer = ChapterStructurer(domain, enable_cache=True, book_title=book_title)
         
-        # 토큰 통계 초기화
+        # 토큰 통계 초기화 (book_id 설정 중요!)
+        if self.token_stats["book_id"] != book_id:
+            # extract_pages가 실행되지 않은 경우 또는 다른 책인 경우
+            self.token_stats["book_id"] = book_id
+            self.token_stats["pages"] = {
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_cost": 0.0,
+                "page_count": 0,
+            }
+        
         self.token_stats["chapters"] = {
             "total_input_tokens": 0,
             "total_output_tokens": 0,

@@ -16,13 +16,22 @@ logger = logging.getLogger(__name__)
 class SummaryCacheManager:
     """OpenAI 요약 결과 캐싱 매니저"""
 
-    def __init__(self, cache_dir: Optional[Path] = None):
+    def __init__(self, cache_dir: Optional[Path] = None, book_title: Optional[str] = None):
         """
         Args:
             cache_dir: 캐시 디렉토리 (None이면 settings.cache_dir / "summaries" 사용)
+            book_title: 책 제목 (폴더 분리용, None이면 루트에 저장)
         """
         if cache_dir is None:
             cache_dir = settings.cache_dir / "summaries"
+        
+        # 책 제목이 제공된 경우 책별 폴더 생성
+        if book_title:
+            # 파일명으로 사용 불가능한 문자 제거
+            safe_title = "".join(c for c in book_title if c.isalnum() or c in (' ', '-', '_')).strip()
+            safe_title = safe_title.replace(' ', '_')[:100]  # 길이 제한
+            cache_dir = Path(cache_dir) / safe_title
+        
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
