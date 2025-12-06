@@ -6,7 +6,7 @@
 """
 import json
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from backend.summarizers.llm_chains import ChapterStructuringChain
 from backend.summarizers.summary_cache_manager import SummaryCacheManager
 
@@ -36,7 +36,7 @@ class ChapterStructurer:
         page_entities_list: List[Dict[str, Any]],
         book_context: Dict[str, Any],
         use_cache: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, int]]]:
         """
         챕터 구조화 (페이지 엔티티 집계)
 
@@ -51,9 +51,24 @@ class ChapterStructurer:
         # 1. 페이지 엔티티 압축 (상위 N개만 추려서 LLM에 전달)
         compressed_pages = self._compress_page_entities(page_entities_list)
         
+        # 디버깅: 페이지 엔티티 수 및 페이지 번호 로깅
+        page_numbers = [pe.get("page_number") for pe in page_entities_list if pe.get("page_number")]
+        logger.info(
+            f"[CACHE_DEBUG] Chapter structuring input: "
+            f"chapter={book_context.get('chapter_title', 'N/A')}, "
+            f"page_entities_count={len(page_entities_list)}, "
+            f"page_numbers={sorted(page_numbers)[:10]}{'...' if len(page_numbers) > 10 else ''}, "
+            f"compressed_count={len(compressed_pages)}"
+        )
+        
         # 2. 캐시 확인
         if use_cache and self.cache_manager:
             cache_key = self._generate_cache_key(compressed_pages, book_context)
+            logger.info(
+                f"[CACHE_DEBUG] Generated cache key: {cache_key[:16]}... "
+                f"(chapter={book_context.get('chapter_title', 'N/A')}, "
+                f"compressed_pages_count={len(compressed_pages)})"
+            )
             cached_result = self.cache_manager.get_cached_summary(
                 cache_key, "chapter"
             )
@@ -63,12 +78,17 @@ class ChapterStructurer:
                 )
                 try:
                     # 캐시된 결과는 JSON 문자열이므로 파싱하여 반환
-                    return json.loads(cached_result)
+                    # 캐시 히트 시에는 usage 정보가 없음 (None 반환)
+                    return json.loads(cached_result), None
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.warning(
                         f"[WARNING] Failed to parse cached result: {e}, will re-structure"
                     )
                     # 파싱 실패 시 재구조화
+            else:
+                logger.info(
+                    f"[CACHE_DEBUG] Cache miss for chapter structuring (hash: {cache_key[:8]}...)"
+                )
 
         # 3. LLM 호출
         logger.info(
@@ -78,7 +98,7 @@ class ChapterStructurer:
         )
         
         try:
-            result = self.chain.structure_chapter(compressed_pages, book_context)
+            result, usage = self.chain.structure_chapter(compressed_pages, book_context)
             
             # 4. Pydantic 모델을 JSON으로 변환
             result_json = result.model_dump_json()
@@ -89,10 +109,11 @@ class ChapterStructurer:
                 cache_key = self._generate_cache_key(compressed_pages, book_context)
                 self.cache_manager.save_cache(cache_key, "chapter", result_json)
                 logger.info(
-                    f"[INFO] Cached chapter structuring result (hash: {cache_key[:8]}...)"
+                    f"[INFO] Cached chapter structuring result (hash: {cache_key[:16]}... "
+                    f"chapter={book_context.get('chapter_title', 'N/A')})"
                 )
             
-            return result_dict
+            return result_dict, usage
             
         except Exception as e:
             logger.error(f"[ERROR] Chapter structuring failed: {e}")

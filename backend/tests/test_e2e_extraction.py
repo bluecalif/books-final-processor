@@ -8,10 +8,106 @@ import pytest
 import httpx
 import time
 import json
+import re
 from pathlib import Path
+from typing import Optional, Dict
 from backend.config.settings import settings
 
 pytestmark = pytest.mark.e2e
+
+
+def parse_progress_from_log(log_file_path: Path, progress_type: str = "pages") -> Optional[Dict[str, int]]:
+    """
+    서버 로그에서 진행률 파싱
+    
+    Args:
+        log_file_path: 서버 로그 파일 경로
+        progress_type: "pages" 또는 "chapters"
+        
+    Returns:
+        {"extracted": int, "failed": int, "processed": int, "total": int} 또는 None
+    """
+    if not log_file_path.exists():
+        return None
+    
+    try:
+        # 파일 크기가 크면 마지막 부분만 읽기 (성능 최적화)
+        # 인코딩 오류 시 여러 인코딩 시도
+        encodings = ['utf-8-sig', 'utf-8', 'cp949', 'latin-1']
+        lines = None
+        
+        for encoding in encodings:
+            try:
+                with open(log_file_path, 'r', encoding=encoding, errors='replace') as f:
+                    # 파일 크기 확인
+                    f.seek(0, 2)  # 파일 끝으로 이동
+                    file_size = f.tell()
+                    
+                    # 마지막 50KB만 읽기 (대부분의 경우 충분)
+                    read_size = min(50 * 1024, file_size)
+                    f.seek(max(0, file_size - read_size))
+                    lines = f.readlines()
+                    break  # 성공하면 루프 종료
+            except (UnicodeDecodeError, UnicodeError):
+                continue  # 다음 인코딩 시도
+        
+        if lines is None:
+            return None  # 모든 인코딩 실패
+        
+        # 마지막부터 역순으로 검색
+        pattern = "[PROGRESS] Pages:" if progress_type == "pages" else "[PROGRESS] Chapters:"
+        regex = (
+            r'Pages: (\d+) success, (\d+) failed, (\d+)/(\d+) total'
+            if progress_type == "pages"
+            else r'Chapters: (\d+) success, (\d+) failed, (\d+)/(\d+) total'
+        )
+        
+        for line in reversed(lines):
+            if pattern in line:
+                if progress_type == "pages":
+                    # 예: "[PROGRESS] Pages: 100 success, 0 failed, 100/582 total (17%)"
+                    match = re.search(
+                        r'Pages: (\d+) success, (\d+) failed, (\d+)/(\d+) total',
+                        line
+                    )
+                    if match:
+                        return {
+                            "extracted": int(match.group(1)),
+                            "failed": int(match.group(2)),
+                            "processed": int(match.group(3)),
+                            "total": int(match.group(4))
+                        }
+                else:
+                    # 예: "[PROGRESS] Chapters: 5 success, 0 failed, 5/8 total (62%)"
+                    match = re.search(
+                        r'Chapters: (\d+) success, (\d+) failed, (\d+)/(\d+) total',
+                        line
+                    )
+                    if match:
+                        return {
+                            "extracted": int(match.group(1)),
+                            "failed": int(match.group(2)),
+                            "processed": int(match.group(3)),
+                            "total": int(match.group(4))
+                        }
+    except Exception as e:
+        print(f"[WARNING] Failed to parse log file: {e}")
+    
+    return None
+
+
+def find_latest_server_log() -> Optional[Path]:
+    """최신 서버 로그 파일 찾기"""
+    log_dir = Path("data/test_results")
+    if not log_dir.exists():
+        return None
+    
+    log_files = list(log_dir.glob("server_*.log"))
+    if not log_files:
+        return None
+    
+    # 최신 파일 반환
+    return max(log_files, key=lambda p: p.stat().st_mtime)
 
 
 @pytest.mark.e2e
@@ -128,6 +224,304 @@ def test_samples():
         })
     
     return samples
+
+
+# 파라미터화된 테스트 대상 도서 리스트
+TEST_BOOKS = [
+    (176, "1000년", "역사/사회", 8),
+    (177, "100년 투자 가문의 비밀", "경제/경영", 19),
+    (175, "12가지인생의법칙", "인문/자기계발", 12),
+    (184, "AI지도책", "과학/기술", 8),
+]
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize("book_id,title,category,chapter_count", TEST_BOOKS)
+def test_e2e_extraction_per_book(
+    e2e_client: httpx.Client, book_id: int, title: str, category: str, chapter_count: int
+):
+    """
+    파라미터화된 전체 엔티티 추출 플로우 E2E 테스트
+    
+    여러 책에 대해 동일한 테스트 로직을 적용하여 일관성 있게 검증
+    
+    Args:
+        book_id: 책 ID
+        title: 책 제목
+        category: 분야
+        chapter_count: 챕터 수
+    """
+    print(f"\n{'=' * 80}")
+    print(f"Testing Book ID: {book_id}, Title: {title}, Category: {category}, Chapters: {chapter_count}")
+    print(f"{'=' * 80}")
+
+    # 1. 책 상태 확인 (structured 상태여야 함)
+    response = e2e_client.get(f"/api/books/{book_id}")
+    assert response.status_code == 200
+    book_data = response.json()
+
+    if book_data["status"] != "structured":
+        pytest.skip(
+            f"Book {book_id} ({title}) is not in 'structured' status. "
+            f"Current status: {book_data['status']}. "
+            f"Please run: poetry run python -m backend.scripts.reset_book_for_test {book_id}"
+        )
+
+    # 2. 페이지 엔티티 추출 시작 (백그라운드 작업)
+    print(f"[TEST] Starting page extraction for book_id={book_id} ({title})...")
+    response = e2e_client.post(f"/api/books/{book_id}/extract/pages")
+    assert response.status_code == 200
+    assert response.json()["status"] == "processing"
+
+    # 3. 페이지 엔티티 추출 완료 대기
+    # 동적 타임아웃 계산: 예상 페이지 수 기준 (구조 데이터에서 추출)
+    if book_data.get("structure_data"):
+        structure = book_data["structure_data"]
+        main_start = structure.get("main_start_page", 0)
+        main_end = structure.get("main_end_page", 0)
+        expected_pages = main_end - main_start + 1 if main_start and main_end else 300
+    else:
+        expected_pages = 300
+    
+    max_wait_time = int(expected_pages * 3 * 1.2)  # 페이지당 3초 + 20% 여유
+    print(f"[TEST] Expected pages: {expected_pages}, Max wait time: {max_wait_time}s ({max_wait_time//60} min)")
+    
+    start_time = time.time()
+    last_page_count = 0
+
+    while True:
+        elapsed = time.time() - start_time
+        if elapsed > max_wait_time:
+            pytest.fail(
+                f"Page extraction timeout after {max_wait_time} seconds for book_id={book_id} ({title})"
+            )
+
+        response = e2e_client.get(f"/api/books/{book_id}")
+        assert response.status_code == 200
+        status = response.json()["status"]
+        
+        # 진행 상황 확인 (서버 로그 파싱 + DB 조회)
+        log_file_path = find_latest_server_log()
+        log_progress = parse_progress_from_log(log_file_path) if log_file_path else None
+        
+        # 서버 로그에서 진행률 확인 (DB 커밋 전에도 확인 가능)
+        if log_progress:
+            current_page_count = log_progress["processed"]
+            extracted_count = log_progress["extracted"]
+        else:
+            # 로그 파싱 실패 시 DB 조회 (커밋 후에만 가능)
+            pages_response = e2e_client.get(f"/api/books/{book_id}/pages")
+            if pages_response.status_code == 200:
+                current_page_count = len(pages_response.json())
+                extracted_count = current_page_count
+            else:
+                current_page_count = 0
+                extracted_count = 0
+        
+        # 10초마다 또는 페이지 수 변화 시 출력
+        should_print = (
+            current_page_count != last_page_count or  # 페이지 수 변화
+            int(elapsed) % 10 == 0  # 10초마다
+        )
+        
+        if should_print:
+            elapsed_min = int(elapsed // 60)
+            elapsed_sec = int(elapsed % 60)
+            progress_pct = int(current_page_count * 100 / expected_pages) if expected_pages > 0 else 0
+            
+            if current_page_count > 0:
+                avg_time = elapsed / current_page_count
+                est_remaining = avg_time * (expected_pages - current_page_count)
+                est_min = int(est_remaining // 60)
+                est_sec = int(est_remaining % 60)
+            else:
+                avg_time = 0.0
+                est_min = 0
+                est_sec = 0
+            
+            source = "log" if log_progress else "DB"
+            print(
+                f"[TEST] Book {book_id} | {current_page_count}/{expected_pages} pages ({progress_pct}%) "
+                f"[{extracted_count} extracted, source: {source}] | "
+                f"Time: {elapsed_min:02d}:{elapsed_sec:02d} | "
+                f"Avg: {avg_time:.1f}s/page | "
+                f"Est: {est_min:02d}:{est_sec:02d}"
+            )
+            last_page_count = current_page_count
+
+        if status == "page_summarized":
+            print(f"[TEST] Page extraction completed for book_id={book_id} ({title}) (elapsed: {elapsed:.1f}s)")
+            break
+        elif status in ["error_summarizing", "failed"]:
+            pytest.fail(
+                f"Page extraction failed for book_id={book_id} ({title}), status={status}"
+            )
+
+        time.sleep(10)  # 서버 부하 감소를 위해 폴링 간격 증가
+
+    # 4. 페이지 엔티티 검증
+    response = e2e_client.get(f"/api/books/{book_id}/pages")
+    assert response.status_code == 200
+    page_entities = response.json()
+
+    assert len(page_entities) > 0, f"No page entities found for book_id={book_id} ({title})"
+
+    # 첫 번째 페이지 엔티티 상세 검증
+    first_page = page_entities[0]
+    assert "structured_data" in first_page, "structured_data field missing"
+    assert first_page["structured_data"] is not None, "structured_data is None"
+
+    structured_data = first_page["structured_data"]
+    assert "page_summary" in structured_data, "page_summary field missing"
+    assert "concepts" in structured_data, "concepts field missing"
+    assert "events" in structured_data, "events field missing"
+
+    print(f"[TEST] Page entities validated: {len(page_entities)} pages for book_id={book_id} ({title})")
+
+    # 5. 챕터 구조화 시작 (백그라운드 작업)
+    print(f"[TEST] Starting chapter structuring for book_id={book_id} ({title})...")
+    response = e2e_client.post(f"/api/books/{book_id}/extract/chapters")
+    assert response.status_code == 200
+    assert response.json()["status"] == "processing"
+
+    # 6. 챕터 구조화 완료 대기 (진행 상황 출력)
+    # 전체 챕터 수 조회 (Book의 structure_data에서)
+    response = e2e_client.get(f"/api/books/{book_id}")
+    assert response.status_code == 200
+    book_data = response.json()
+    
+    # 챕터 수 확인
+    expected_chapters = chapter_count  # 파라미터에서 받은 값 사용
+    if book_data.get("structure_data"):
+        structure = book_data["structure_data"]
+        if "chapters" in structure:
+            expected_chapters = len(structure["chapters"])
+    
+    if expected_chapters == 0:
+        expected_chapters = 10  # 기본값
+    
+    print(f"[TEST] Expected chapters: {expected_chapters}, Max wait time: {max_wait_time}s ({max_wait_time//60} min)")
+    
+    start_time = time.time()
+    last_chapter_count = 0
+
+    while True:
+        elapsed = time.time() - start_time
+        if elapsed > max_wait_time:
+            pytest.fail(
+                f"Chapter structuring timeout after {max_wait_time} seconds for book_id={book_id} ({title})"
+            )
+
+        response = e2e_client.get(f"/api/books/{book_id}")
+        assert response.status_code == 200
+        status = response.json()["status"]
+        
+        # 진행 상황 확인 (서버 로그 파싱 + DB 조회)
+        log_file_path = find_latest_server_log()
+        log_progress = parse_progress_from_log(log_file_path, "chapters") if log_file_path else None
+        
+        # 서버 로그에서 진행률 확인 (DB 커밋 전에도 확인 가능)
+        if log_progress:
+            current_chapter_count = log_progress["processed"]
+            structured_count = log_progress["extracted"]
+        else:
+            # 로그 파싱 실패 시 DB 조회 (커밋 후에만 가능)
+            chapters_response = e2e_client.get(f"/api/books/{book_id}/chapters")
+            if chapters_response.status_code == 200:
+                current_chapter_count = len(chapters_response.json())
+                structured_count = current_chapter_count
+            else:
+                current_chapter_count = 0
+                structured_count = 0
+        
+        # 10초마다 또는 챕터 수 변화 시 출력
+        should_print = (
+            current_chapter_count != last_chapter_count or  # 챕터 수 변화
+            int(elapsed) % 10 == 0  # 10초마다
+        )
+        
+        if should_print:
+            elapsed_min = int(elapsed // 60)
+            elapsed_sec = int(elapsed % 60)
+            progress_pct = int(current_chapter_count * 100 / expected_chapters) if expected_chapters > 0 else 0
+            
+            if current_chapter_count > 0:
+                avg_time = elapsed / current_chapter_count
+                est_remaining = avg_time * (expected_chapters - current_chapter_count)
+                est_min = int(est_remaining // 60)
+                est_sec = int(est_remaining % 60)
+            else:
+                avg_time = 0.0
+                est_min = 0
+                est_sec = 0
+            
+            source = "log" if log_progress else "DB"
+            print(
+                f"[TEST] Book {book_id} | {current_chapter_count}/{expected_chapters} chapters ({progress_pct}%) "
+                f"[{structured_count} structured, source: {source}] | "
+                f"Time: {elapsed_min:02d}:{elapsed_sec:02d} | "
+                f"Avg: {avg_time:.1f}s/chapter | "
+                f"Est: {est_min:02d}:{est_sec:02d}"
+            )
+            last_chapter_count = current_chapter_count
+
+        if status == "summarized":
+            print(f"[TEST] Chapter structuring completed for book_id={book_id} ({title}) (elapsed: {elapsed:.1f}s)")
+            break
+        elif status in ["error_summarizing", "failed"]:
+            pytest.fail(
+                f"Chapter structuring failed for book_id={book_id} ({title}), status={status}"
+            )
+
+        time.sleep(10)  # 서버 부하 감소를 위해 폴링 간격 증가
+
+    # 7. 챕터 구조화 결과 검증
+    response = e2e_client.get(f"/api/books/{book_id}/chapters")
+    assert response.status_code == 200
+    chapter_entities = response.json()
+
+    assert len(chapter_entities) > 0, f"No chapter entities found for book_id={book_id} ({title})"
+
+    # 첫 번째 챕터 엔티티 상세 검증
+    first_chapter = chapter_entities[0]
+    assert "structured_data" in first_chapter, "structured_data field missing"
+    assert first_chapter["structured_data"] is not None, "structured_data is None"
+
+    chapter_structured_data = first_chapter["structured_data"]
+    assert "core_message" in chapter_structured_data, "core_message field missing"
+    assert (
+        "summary_3_5_sentences" in chapter_structured_data
+    ), "summary_3_5_sentences field missing"
+    assert "argument_flow" in chapter_structured_data, "argument_flow field missing"
+
+    print(f"[TEST] Chapter entities validated: {len(chapter_entities)} chapters for book_id={book_id} ({title})")
+
+    # 8. 토큰 통계 파일 확인
+    token_stats_file = (
+        settings.output_dir / "token_stats" / f"book_{book_id}_tokens.json"
+    )
+    if token_stats_file.exists():
+        with open(token_stats_file, "r", encoding="utf-8") as f:
+            token_stats = json.load(f)
+
+        pages_stats = token_stats.get("pages", {})
+        chapters_stats = token_stats.get("chapters", {})
+
+        print(f"[TEST] Token stats for book_id={book_id} ({title}):")
+        print(
+            f"  Pages: input={pages_stats.get('total_input_tokens', 0)}, "
+            f"output={pages_stats.get('total_output_tokens', 0)}, "
+            f"cost=${pages_stats.get('total_cost', 0.0):.4f}"
+        )
+        print(
+            f"  Chapters: input={chapters_stats.get('total_input_tokens', 0)}, "
+            f"output={chapters_stats.get('total_output_tokens', 0)}, "
+            f"cost=${chapters_stats.get('total_cost', 0.0):.4f}"
+        )
+    else:
+        print(f"[WARNING] Token stats file not found: {token_stats_file}")
+
+    print(f"[TEST] ✅ All tests passed for book_id={book_id} ({title})")
 
 
 @pytest.mark.e2e

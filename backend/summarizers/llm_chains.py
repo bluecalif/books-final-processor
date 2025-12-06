@@ -6,7 +6,7 @@ OpenAI Structured Output을 사용하여 도메인별 스키마에 맞는 엔티
 import json
 import logging
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from openai import OpenAI
 from backend.config.settings import settings
 from backend.summarizers.schemas import (
@@ -49,7 +49,7 @@ class PageExtractionChain:
 
     def extract_entities(
         self, page_text: str, book_context: Dict[str, Any]
-    ) -> BasePageSchema:
+    ) -> Tuple[BasePageSchema, Optional[Dict[str, int]]]:
         """
         Structured Output으로 페이지 엔티티 추출
 
@@ -99,8 +99,23 @@ class PageExtractionChain:
                 response_text = response.choices[0].message.content
                 result = self.schema_class.model_validate_json(response_text)
 
+                # 실제 토큰 사용량 추출
+                usage = None
+                if hasattr(response, 'usage') and response.usage:
+                    usage = {
+                        "prompt_tokens": response.usage.prompt_tokens,
+                        "completion_tokens": response.usage.completion_tokens,
+                        "total_tokens": response.usage.total_tokens,
+                    }
+                    logger.debug(
+                        f"[TOKEN_USAGE] Page extraction: "
+                        f"prompt={usage['prompt_tokens']}, "
+                        f"completion={usage['completion_tokens']}, "
+                        f"total={usage['total_tokens']}"
+                    )
+
                 logger.info(f"[INFO] Page entity extraction completed")
-                return result
+                return result, usage
 
             except Exception as e:
                 last_error = e
@@ -291,7 +306,7 @@ class ChapterStructuringChain:
         self,
         compressed_page_entities: List[Dict[str, Any]],
         book_context: Dict[str, Any],
-    ) -> BaseChapterSchema:
+    ) -> Tuple[BaseChapterSchema, Optional[Dict[str, int]]]:
         """
         페이지 엔티티를 집계하여 챕터 구조화
 
@@ -342,8 +357,23 @@ class ChapterStructuringChain:
                 response_text = response.choices[0].message.content
                 result = self.schema_class.model_validate_json(response_text)
 
+                # 실제 토큰 사용량 추출
+                usage = None
+                if hasattr(response, 'usage') and response.usage:
+                    usage = {
+                        "prompt_tokens": response.usage.prompt_tokens,
+                        "completion_tokens": response.usage.completion_tokens,
+                        "total_tokens": response.usage.total_tokens,
+                    }
+                    logger.debug(
+                        f"[TOKEN_USAGE] Chapter structuring: "
+                        f"prompt={usage['prompt_tokens']}, "
+                        f"completion={usage['completion_tokens']}, "
+                        f"total={usage['total_tokens']}"
+                    )
+
                 logger.info(f"[INFO] Chapter structuring completed")
-                return result
+                return result, usage
 
             except Exception as e:
                 last_error = e

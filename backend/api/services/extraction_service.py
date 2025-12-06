@@ -174,6 +174,17 @@ class ExtractionService:
                 f"(limit_pages={limit_pages})"
             )
 
+        # 챕터 정보를 미리 조회하여 딕셔너리로 생성 (병렬 처리 중 DB 접근 방지)
+        chapters = self.db.query(Chapter).filter(Chapter.book_id == book_id).order_by(Chapter.order_index).all()
+        chapter_info_map = {}  # {page_number: {"title": ..., "number": ...}}
+        for chapter in chapters:
+            for page_num in range(chapter.start_page, chapter.end_page + 1):
+                chapter_info_map[page_num] = {
+                    "title": chapter.title,
+                    "number": chapter.order_index + 1,  # 1-based
+                }
+        logger.info(f"[INFO] Chapter info map created: {len(chapter_info_map)} pages mapped to {len(chapters)} chapters")
+
         # 5. PageExtractor 초기화 (책 제목 전달하여 캐시 폴더 분리)
         book_title = book.title or f"book_{book_id}"
         page_extractor = PageExtractor(domain, enable_cache=True, book_title=book_title)
@@ -194,6 +205,8 @@ class ExtractionService:
         def extract_single_page(page_number: int) -> Tuple[int, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
             """
             단일 페이지 엔티티 추출 (병렬 처리용)
+            
+            주의: DB 저장은 메인 스레드에서 처리하므로 여기서는 DB 접근 없이 엔티티 추출만 수행
             
             Returns:
                 (page_number, structured_data, token_info) 또는 (page_number, None, None) (실패 시)
@@ -222,8 +235,8 @@ class ExtractionService:
                     f"{len(page_text)} chars → 4000 chars"
                 )
 
-            # 책 컨텍스트 생성
-            chapter_info = self._get_chapter_info(book, page_number)
+            # 책 컨텍스트 생성 (DB 접근 없이 미리 조회한 chapter_info_map 사용)
+            chapter_info = chapter_info_map.get(page_number, {"title": "Unknown", "number": "Unknown"})
             book_context = {
                 "book_title": book.title or "Unknown",
                 "chapter_title": chapter_info.get("title", "Unknown"),
@@ -231,31 +244,40 @@ class ExtractionService:
             }
 
             try:
-                # 토큰 계산 (프롬프트 재생성)
-                prompt = self._build_page_prompt(page_text, book_context, domain)
-                input_tokens = self.token_counter.calculate_prompt_tokens(
-                    prompt["system"], prompt["user"]
+                # 페이지 엔티티 추출 (DB 접근 없음)
+                structured_data, usage = page_extractor.extract_page_entities(
+                    page_text, book_context, use_cache=True
                 )
-                output_tokens = self.token_counter.estimate_output_tokens(
-                    page_schema_class
-                )
-                cost = self.token_counter.calculate_cost(input_tokens, output_tokens)
+                
+                # 실제 API 응답의 usage 정보 사용 (있으면), 없으면 예상치 계산
+                if usage:
+                    input_tokens = usage["prompt_tokens"]
+                    output_tokens = usage["completion_tokens"]
+                    cost = self.token_counter.calculate_cost(input_tokens, output_tokens)
+                    logger.info(
+                        f"[TOKEN] Page {page_number}: input={input_tokens}, "
+                        f"output={output_tokens}, cost=${cost:.6f} (actual)"
+                    )
+                else:
+                    # 캐시 히트 시 예상치 계산 (또는 0으로 처리)
+                    prompt = self._build_page_prompt(page_text, book_context, domain)
+                    input_tokens = self.token_counter.calculate_prompt_tokens(
+                        prompt["system"], prompt["user"]
+                    )
+                    output_tokens = self.token_counter.estimate_output_tokens(
+                        page_schema_class
+                    )
+                    cost = 0.0  # 캐시 히트 시 비용 0
+                    logger.debug(
+                        f"[TOKEN] Page {page_number}: cache hit, estimated "
+                        f"input={input_tokens}, output={output_tokens}, cost=$0.0"
+                    )
                 
                 token_info = {
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
                     "cost": cost,
                 }
-                
-                logger.info(
-                    f"[TOKEN] Page {page_number}: input={input_tokens}, "
-                    f"output={output_tokens}, cost=${cost:.6f}"
-                )
-                
-                # 페이지 엔티티 추출
-                structured_data = page_extractor.extract_page_entities(
-                    page_text, book_context, use_cache=True
-                )
 
                 return (page_number, structured_data, token_info)
 
@@ -301,12 +323,17 @@ class ExtractionService:
             }
             
             for future in as_completed(futures):
+                # futures 딕셔너리에서 페이지 번호 가져오기
+                page_number = futures.get(future, "unknown")
                 try:
                     page_number, structured_data, token_info = future.result()
                 except Exception as e:
-                    # future.result()에서 예외 발생 시 처리
+                    # future.result()에서 예외 발생 시 처리 (페이지 번호 포함)
                     error_type = type(e).__name__
-                    logger.error(f"[ERROR] Future result failed: {error_type}: {str(e)[:200]}")
+                    logger.error(
+                        f"[ERROR] Future result failed for page {page_number}: "
+                        f"{error_type}: {str(e)[:200]}"
+                    )
                     failed_count += 1
                     continue
                 
@@ -557,32 +584,41 @@ class ExtractionService:
                     "book_summary": "",  # TODO: Book 모델에 book_summary 필드 추가 시 사용
                 }
 
-                # 토큰 계산 (프롬프트 재생성)
-                compressed_pages = self._compress_page_entities(page_entities_list, domain)
-                prompt = self._build_chapter_prompt(compressed_pages, book_context, domain)
-                input_tokens = self.token_counter.calculate_prompt_tokens(
-                    prompt["system"], prompt["user"]
+                # 챕터 구조화
+                structured_data, usage = chapter_structurer.structure_chapter(
+                    page_entities_list, book_context, use_cache=True
                 )
-                output_tokens = self.token_counter.estimate_output_tokens(
-                    chapter_schema_class
-                )
-                cost = self.token_counter.calculate_cost(input_tokens, output_tokens)
+                
+                # 실제 API 응답의 usage 정보 사용 (있으면), 없으면 예상치 계산
+                if usage:
+                    input_tokens = usage["prompt_tokens"]
+                    output_tokens = usage["completion_tokens"]
+                    cost = self.token_counter.calculate_cost(input_tokens, output_tokens)
+                    logger.info(
+                        f"[TOKEN] Chapter {chapter.order_index + 1}: input={input_tokens}, "
+                        f"output={output_tokens}, cost=${cost:.6f} (actual)"
+                    )
+                else:
+                    # 캐시 히트 시 예상치 계산 (비용은 0)
+                    compressed_pages = self._compress_page_entities(page_entities_list, domain)
+                    prompt = self._build_chapter_prompt(compressed_pages, book_context, domain)
+                    input_tokens = self.token_counter.calculate_prompt_tokens(
+                        prompt["system"], prompt["user"]
+                    )
+                    output_tokens = self.token_counter.estimate_output_tokens(
+                        chapter_schema_class
+                    )
+                    cost = 0.0  # 캐시 히트 시 비용 0
+                    logger.debug(
+                        f"[TOKEN] Chapter {chapter.order_index + 1}: cache hit, estimated "
+                        f"input={input_tokens}, output={output_tokens}, cost=$0.0"
+                    )
                 
                 token_info = {
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
                     "cost": cost,
                 }
-                
-                logger.info(
-                    f"[TOKEN] Chapter {chapter.order_index + 1}: input={input_tokens}, "
-                    f"output={output_tokens}, cost=${cost:.6f}"
-                )
-                
-                # 챕터 구조화
-                structured_data = chapter_structurer.structure_chapter(
-                    page_entities_list, book_context, use_cache=True
-                )
 
                 return (chapter, structured_data, token_info)
 

@@ -6,7 +6,7 @@
 """
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from backend.summarizers.llm_chains import PageExtractionChain
 from backend.summarizers.summary_cache_manager import SummaryCacheManager
 from backend.summarizers.schemas import get_domain_from_category, BasePageSchema
@@ -37,7 +37,7 @@ class PageExtractor:
         page_text: str,
         book_context: Dict[str, Any],
         use_cache: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, int]]]:
         """
         페이지 엔티티 추출 (캐시 통합)
 
@@ -62,7 +62,8 @@ class PageExtractor:
                 try:
                     # 캐시된 결과는 JSON 문자열이므로 파싱하여 반환
                     # SummaryCacheManager는 summary_text 필드에 JSON 문자열을 저장
-                    return json.loads(cached_result)
+                    # 캐시 히트 시에는 usage 정보가 없음 (None 반환)
+                    return json.loads(cached_result), None
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.warning(
                         f"[WARNING] Failed to parse cached result: {e}, will re-extract"
@@ -76,7 +77,7 @@ class PageExtractor:
         )
         
         try:
-            result = self.chain.extract_entities(page_text, book_context)
+            result, usage = self.chain.extract_entities(page_text, book_context)
             
             # 3. Pydantic 모델을 JSON으로 변환
             result_json = result.model_dump_json()
@@ -90,7 +91,7 @@ class PageExtractor:
                     f"[INFO] Cached page extraction result (hash: {content_hash[:8]}...)"
                 )
             
-            return result_dict
+            return result_dict, usage
             
         except Exception as e:
             logger.error(f"[ERROR] Page extraction failed: {e}")
