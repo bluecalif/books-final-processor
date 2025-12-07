@@ -48,6 +48,15 @@ class ChapterStructurer:
         Returns:
             구조화된 챕터 엔티티 딕셔너리 (JSON 직렬화 가능)
         """
+        # 0. 2페이지 이하 챕터 스킵
+        if len(page_entities_list) <= 2:
+            logger.warning(
+                f"[WARNING] Chapter has {len(page_entities_list)} pages, skipping chapter structuring "
+                f"(chapter: {book_context.get('chapter_title', 'N/A')})"
+            )
+            # None 반환하여 스킵 표시
+            return None, None
+        
         # 1. 페이지 엔티티 압축 (상위 N개만 추려서 LLM에 전달)
         compressed_pages = self._compress_page_entities(page_entities_list)
         
@@ -78,6 +87,18 @@ class ChapterStructurer:
                 )
                 # 캐시된 결과는 이미 딕셔너리 형태 (새로운 시각화 구조)
                 # 캐시 히트 시에는 usage 정보가 없음 (None 반환)
+                # 메타 정보가 없는 경우 추가 (기존 캐시 보강 전)
+                if "chapter_number" not in cached_result or "chapter_title" not in cached_result:
+                    chapter_number = book_context.get("chapter_number")
+                    chapter_title = book_context.get("chapter_title")
+                    if isinstance(chapter_number, str):
+                        try:
+                            chapter_number = int(chapter_number)
+                        except (ValueError, TypeError):
+                            chapter_number = None
+                    # chapter_number는 이미 1-based로 전달됨 (추가 변환 불필요)
+                    cached_result["chapter_number"] = chapter_number
+                    cached_result["chapter_title"] = chapter_title
                 return cached_result, None
             else:
                 logger.info(
@@ -98,14 +119,33 @@ class ChapterStructurer:
             result_json = result.model_dump_json()
             result_dict = json.loads(result_json)
             
-            # 5. 캐시 저장
+            # 5. 챕터 메타 정보 추가 (chapter_number, chapter_title)
+            chapter_number = book_context.get("chapter_number")
+            chapter_title = book_context.get("chapter_title")
+            
+            # chapter_number가 문자열인 경우 숫자로 변환 시도
+            if isinstance(chapter_number, str):
+                try:
+                    # "1", "2" 같은 문자열을 숫자로 변환
+                    chapter_number = int(chapter_number)
+                except (ValueError, TypeError):
+                    # 변환 실패 시 None으로 설정
+                    chapter_number = None
+            
+            # chapter_number는 이미 1-based로 전달됨 (ExtractionService에서 order_index + 1)
+            # 추가 변환 불필요
+            
+            result_dict["chapter_number"] = chapter_number
+            result_dict["chapter_title"] = chapter_title
+            
+            # 6. 캐시 저장
             if use_cache and self.cache_manager:
                 cache_key = self._generate_cache_key(compressed_pages, book_context)
-                # 딕셔너리를 직접 전달 (JSON 문자열 변환 제거)
+                # 딕셔너리를 직접 전달 (JSON 문자열 변환 제거, 메타 정보 포함)
                 self.cache_manager.save_cache(cache_key, "chapter", result_dict)
                 logger.info(
                     f"[INFO] Cached chapter structuring result (hash: {cache_key[:16]}... "
-                    f"chapter={book_context.get('chapter_title', 'N/A')})"
+                    f"chapter={chapter_title or 'N/A'}, number={chapter_number or 'N/A'})"
                 )
             
             return result_dict, usage
