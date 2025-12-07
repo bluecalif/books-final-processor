@@ -45,7 +45,7 @@ def match_cache_file_to_chapter(
     cache_file: Path, book_id: int, db: Session, chapter_summaries: List[ChapterSummary]
 ) -> Optional[ChapterSummary]:
     """
-    캐시 파일을 ChapterSummary와 매칭 (core_message 비교)
+    캐시 파일을 ChapterSummary와 매칭 (여러 방법 시도)
     
     Returns:
         매칭된 ChapterSummary 또는 None
@@ -55,20 +55,45 @@ def match_cache_file_to_chapter(
             cache_data = json.load(f)
         
         cache_core_message = cache_data.get("core_message", "")
+        cache_content_hash = cache_data.get("content_hash", "")
+        
         if not cache_core_message:
             return None
         
-        # ChapterSummary의 structured_data와 core_message 비교
+        # 방법 1: content_hash로 매칭 (가장 정확)
+        if cache_content_hash:
+            for cs in chapter_summaries:
+                if cs.structured_data:
+                    cs_hash = cs.structured_data.get("content_hash", "")
+                    if cs_hash == cache_content_hash:
+                        logger.debug(f"[DEBUG] Matched by content_hash: {cache_file.name} -> Chapter {cs.chapter_id}")
+                        return cs
+        
+        # 방법 2: core_message 처음 100자 비교
         for cs in chapter_summaries:
             if cs.structured_data:
                 cs_core_message = cs.structured_data.get("core_message", "")
-                # 처음 100자 비교 (더 정확한 매칭)
                 if cs_core_message and len(cs_core_message) > 50:
                     if cs_core_message[:100] == cache_core_message[:100]:
+                        logger.debug(f"[DEBUG] Matched by core_message (100 chars): {cache_file.name} -> Chapter {cs.chapter_id}")
                         return cs
-                elif cs_core_message and len(cs_core_message) > 20:
-                    # 짧은 경우 50자 비교
+        
+        # 방법 3: core_message 처음 50자 비교
+        for cs in chapter_summaries:
+            if cs.structured_data:
+                cs_core_message = cs.structured_data.get("core_message", "")
+                if cs_core_message and len(cs_core_message) > 20:
                     if cs_core_message[:50] == cache_core_message[:50]:
+                        logger.debug(f"[DEBUG] Matched by core_message (50 chars): {cache_file.name} -> Chapter {cs.chapter_id}")
+                        return cs
+        
+        # 방법 4: core_message 처음 30자 비교 (더 유연한 매칭)
+        for cs in chapter_summaries:
+            if cs.structured_data:
+                cs_core_message = cs.structured_data.get("core_message", "")
+                if cs_core_message and len(cs_core_message) > 10:
+                    if cs_core_message[:30] == cache_core_message[:30]:
+                        logger.debug(f"[DEBUG] Matched by core_message (30 chars): {cache_file.name} -> Chapter {cs.chapter_id}")
                         return cs
         
         return None
