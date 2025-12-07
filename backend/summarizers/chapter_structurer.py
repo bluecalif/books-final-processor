@@ -99,6 +99,11 @@ class ChapterStructurer:
                     # chapter_number는 이미 1-based로 전달됨 (추가 변환 불필요)
                     cached_result["chapter_number"] = chapter_number
                     cached_result["chapter_title"] = chapter_title
+                
+                # page_count가 없는 경우 추가
+                if "page_count" not in cached_result:
+                    cached_result["page_count"] = len(page_entities_list)
+                
                 return cached_result, None
             else:
                 logger.info(
@@ -137,6 +142,7 @@ class ChapterStructurer:
             
             result_dict["chapter_number"] = chapter_number
             result_dict["chapter_title"] = chapter_title
+            result_dict["page_count"] = len(page_entities_list)  # 페이지 수 추가
             
             # 6. 캐시 저장
             if use_cache and self.cache_manager:
