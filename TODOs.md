@@ -24,7 +24,7 @@
 | Phase 3 | 구조 분석 모듈 | 100% | 완료 |
 | Phase 4 | 대량 도서 처리 프레임 단계 | 100% | 완료 |
 | Phase 5 | 내용 추출 및 요약 모듈 | 100% | 완료 |
-| Phase 6 | Summary 캐시 시각화 및 변환 정교화 | 25% | 진행 중 (6.1 완료) |
+| Phase 6 | Summary 캐시 시각화 및 변환 정교화 | 75% | 진행 중 (6.1, 6.2 완료) |
 | Phase 7 | 통합 및 테스트 | 0% | 미시작 |
 
 ## Git 저장소 정보
@@ -241,12 +241,13 @@
 **목표**: 사용자 리뷰를 통해 페이지 엔티티와 챕터 서머리의 품질을 검증하고, 변환 로직을 개선합니다.
 
 #### 6.2.1 시각화된 캐시 리뷰 도구 작성
-- [ ] `backend/scripts/review_cache.py` 생성
+- [x] `backend/scripts/review_cache.py` 생성 ✅ 완료
   - 페이지 엔티티 캐시 조회 및 표시
   - 챕터 서머리 캐시 조회 및 표시
-  - **JSON 포맷팅 출력** (읽기 쉬운 형태로 터미널에 출력)
+  - **HTML 파일 생성** (브라우저에서 시각화)
   - 특정 도서/챕터/페이지 필터링 지원
-  - **출력 방식**: 스크립트 실행 시 JSON을 포맷팅하여 출력 (수동 리뷰)
+  - 키워드 검색 기능
+  - 페이지 엔티티 → 챕터 서머리 매핑 시각화
 
 #### 6.2.2 사용자 리뷰 및 피드백 수집
 - [ ] 테스트 도서 4권의 페이지 엔티티 리뷰
@@ -268,32 +269,43 @@
   - 문제점 목록 및 개선 제안
 
 #### 6.2.4 변환 로직 개선
-- [ ] `backend/summarizers/llm_chains.py` 수정
+- [x] `backend/summarizers/llm_chains.py` 수정 ✅ 완료
   - `ChapterStructuringChain` 프롬프트 개선
-    - 페이지 엔티티 통합 지침 강화
-    - 중복 제거 로직 명확화
-    - 누락 방지 지침 추가
-- [ ] `backend/summarizers/chapter_structurer.py` 수정
-  - 페이지 엔티티 압축 로직 개선
-    - 핵심 정보 우선 보존
-    - 압축 비율 조정
-  - 변환 후 검증 로직 추가
-    - 필수 필드 존재 확인
-    - 데이터 일관성 검증
-  - **챕터 메타 정보 추가**: `chapter_number` (order_index + 1), `chapter_title`을 캐시 메타데이터에 포함
-  - **2페이지 이하 챕터 스킵**: 페이지 수가 2페이지 이하인 챕터는 서머리 생성하지 않음 (로그 기록)
+    - key_events: 최대 8-10개, 중요도 기반 선별 지침 추가
+    - key_examples: 최대 5-7개, 대표성 기반 선별 지침 추가
+    - key_persons: 최대 8-10개, 중요도 기반 선별 지침 추가
+    - key_concepts: 최대 10-12개, 중요도 기반 선별 지침 추가
+    - 단순 병합 대신 중요도/대표성 기반 선별 지침 명시
+- [x] `backend/summarizers/schemas.py` 수정 ✅ 완료
+  - Field description에 최대 개수 및 선별 기준 명시
+- [x] `backend/summarizers/chapter_structurer.py` 수정 ✅ 완료
+  - **2페이지 이하 챕터 스킵**: 페이지 수가 2페이지 이하인 챕터는 서머리 생성하지 않음 (None 반환, 로그 기록)
+  - **챕터 메타 정보 추가**: `chapter_number`, `chapter_title`, `page_count`를 캐시 메타데이터에 포함
   - **주의**: 새로운 시각화된 캐시 구조를 입력으로 받음
-- [ ] 기존 캐시 보강 스크립트 작성 (`backend/scripts/add_chapter_metadata_to_cache.py`)
-  - DB에서 Chapter 정보 조회하여 `chapter_number`, `chapter_title` 추가
-  - 기존 캐시 파일 백업 후 수정
-  - 변환 통계 출력
+- [x] `backend/api/services/extraction_service.py` 수정 ✅ 완료
+  - 2페이지 이하 챕터 스킵 로직 개선
+    - `skipped_count` 추가하여 의도된 스킵과 실패 구분
+    - 진행 상황 로그에 `skipped` 카운트 포함
+    - 최종 리포트에 `skipped` 카운트 포함
+- [x] 기존 캐시 보강 스크립트 작성 ✅ 완료
+  - `backend/scripts/add_page_count_to_cache.py`: `page_count` 추가 (기존 캐시 보강)
+  - `backend/scripts/add_chapter_metadata_to_cache.py`: `chapter_number`, `chapter_title` 추가 (기존 캐시 보강)
 
 #### 6.2.5 개선된 로직으로 재처리
-- [ ] 테스트 도서 4권 재처리
-  - 기존 캐시 삭제 또는 무시
-  - 페이지 엔티티 재추출 (필요시)
-  - 챕터 서머리 재생성
-  - 개선 전후 비교 리포트 생성
+- [x] 챕터 서머리 재처리 스크립트 작성 ✅ 완료
+  - `backend/scripts/delete_chapter_caches.py`: 챕터 서머리 캐시만 삭제 (페이지 엔티티 캐시 유지)
+  - `backend/scripts/reprocess_chapter_summaries.py`: 개선된 프롬프트로 챕터 서머리 재생성
+  - `backend/scripts/reprocess_all_test_books.py`: 테스트 도서 4권 일괄 재처리
+- [x] 테스트 도서 4권 재처리 ✅ 완료
+  - Book 176 (1000년): 8개 챕터 성공, 0개 실패, 0개 스킵
+  - Book 177 (투자정신): 19개 챕터 성공, 0개 실패, 0개 스킵
+  - Book 184 (AI지도책): 6개 챕터 성공, 0개 실패, 2개 스킵 (2페이지 이하)
+  - Book 175 (12가지인생의법칙): 12개 챕터 성공, 0개 실패, 0개 스킵
+  - 총 비용: $0.4379
+  - 페이지 엔티티는 DB에서 읽어 재사용 (캐시 삭제 없음)
+- [x] HTML 리뷰 파일 재생성 ✅ 완료
+  - 4권 모두 HTML 리뷰 파일 생성 완료
+  - 개선된 프롬프트로 생성된 챕터 서머리 확인 가능
 
 ### 6.3 챕터 서머리 → 도서 전체 서머리 생성
 
