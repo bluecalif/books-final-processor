@@ -116,19 +116,19 @@ class BaseChapterSchema(BaseModel):
     )
     key_events: List[str] = Field(
         default_factory=list,
-        description="핵심 사건 목록 (페이지 엔티티 통합/중복 제거)",
+        description="핵심 사건 목록 (최대 8-10개, 중요도 기반 선별, 중복 제거 및 통합)",
     )
     key_examples: List[str] = Field(
         default_factory=list,
-        description="핵심 예시 목록 (페이지 엔티티 통합/중복 제거)",
+        description="핵심 예시 목록 (최대 5-7개, 대표성 기반 선별, 중복 제거 및 통합)",
     )
     key_persons: List[str] = Field(
         default_factory=list,
-        description="핵심 인물 목록 (페이지 엔티티 통합/중복 제거)",
+        description="핵심 인물 목록 (최대 8-10개, 중요도 기반 선별, 중복 제거)",
     )
     key_concepts: List[str] = Field(
         default_factory=list,
-        description="핵심 개념 목록 (페이지 엔티티 통합/중복 제거)",
+        description="핵심 개념 목록 (최대 10-12개, 중요도 기반 선별, 중복 제거 및 통합)",
     )
     insights: List[str] = Field(
         default_factory=list, description="인사이트 목록 (각 인사이트는 텍스트 형태)"

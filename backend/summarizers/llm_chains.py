@@ -447,10 +447,22 @@ Synthesize chapter-level structure from the page entities above:
 - core_message: One-line core message of this chapter
 - summary_3_5_sentences: 3-5 sentence summary
 - argument_flow: Structure with problem, background, main_claims, evidence_overview, counterpoints_or_limits, conclusion_or_action
-- key_events: Consolidated list of key events (deduplicate from pages)
-- key_examples: Consolidated list of key examples (deduplicate from pages)
-- key_persons: Consolidated list of key persons (deduplicate from pages)
-- key_concepts: Consolidated list of key concepts (deduplicate from pages)
+- key_events: Select only the MOST IMPORTANT events (max 8-10 items)
+  * Remove duplicates and merge similar events
+  * Prioritize events that are central to the chapter's argument
+  * Exclude minor or peripheral events
+- key_examples: Select only the MOST REPRESENTATIVE examples (max 5-7 items)
+  * Remove duplicates and merge similar examples
+  * Prioritize examples that best illustrate the chapter's main points
+  * Exclude redundant or less illustrative examples
+- key_persons: Select only the MOST SIGNIFICANT persons (max 8-10 items)
+  * Remove duplicates (same person mentioned in multiple pages)
+  * Prioritize persons who are central to the chapter's narrative
+  * Exclude persons who are only briefly mentioned
+- key_concepts: Select only the MOST CRITICAL concepts (max 10-12 items)
+  * Remove duplicates and merge related concepts
+  * Prioritize concepts that are essential to understanding the chapter
+  * Exclude peripheral or less important concepts
 - insights: List of insights (type, text, supporting_evidence_ids)
 - chapter_level_synthesis: Chapter-level synthesis
 - references: Consolidated list of references
