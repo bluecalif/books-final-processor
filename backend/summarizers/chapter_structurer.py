@@ -76,15 +76,9 @@ class ChapterStructurer:
                 logger.info(
                     f"[INFO] Cache hit for chapter structuring (hash: {cache_key[:8]}...)"
                 )
-                try:
-                    # 캐시된 결과는 JSON 문자열이므로 파싱하여 반환
-                    # 캐시 히트 시에는 usage 정보가 없음 (None 반환)
-                    return json.loads(cached_result), None
-                except (json.JSONDecodeError, TypeError) as e:
-                    logger.warning(
-                        f"[WARNING] Failed to parse cached result: {e}, will re-structure"
-                    )
-                    # 파싱 실패 시 재구조화
+                # 캐시된 결과는 이미 딕셔너리 형태 (새로운 시각화 구조)
+                # 캐시 히트 시에는 usage 정보가 없음 (None 반환)
+                return cached_result, None
             else:
                 logger.info(
                     f"[CACHE_DEBUG] Cache miss for chapter structuring (hash: {cache_key[:8]}...)"
@@ -107,7 +101,8 @@ class ChapterStructurer:
             # 5. 캐시 저장
             if use_cache and self.cache_manager:
                 cache_key = self._generate_cache_key(compressed_pages, book_context)
-                self.cache_manager.save_cache(cache_key, "chapter", result_json)
+                # 딕셔너리를 직접 전달 (JSON 문자열 변환 제거)
+                self.cache_manager.save_cache(cache_key, "chapter", result_dict)
                 logger.info(
                     f"[INFO] Cached chapter structuring result (hash: {cache_key[:16]}... "
                     f"chapter={book_context.get('chapter_title', 'N/A')})"

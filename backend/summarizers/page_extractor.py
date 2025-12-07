@@ -59,16 +59,9 @@ class PageExtractor:
                 logger.info(
                     f"[INFO] Cache hit for page extraction (hash: {content_hash[:8]}...)"
                 )
-                try:
-                    # 캐시된 결과는 JSON 문자열이므로 파싱하여 반환
-                    # SummaryCacheManager는 summary_text 필드에 JSON 문자열을 저장
-                    # 캐시 히트 시에는 usage 정보가 없음 (None 반환)
-                    return json.loads(cached_result), None
-                except (json.JSONDecodeError, TypeError) as e:
-                    logger.warning(
-                        f"[WARNING] Failed to parse cached result: {e}, will re-extract"
-                    )
-                    # 파싱 실패 시 재추출
+                # 캐시된 결과는 이미 딕셔너리 형태 (새로운 시각화 구조)
+                # 캐시 히트 시에는 usage 정보가 없음 (None 반환)
+                return cached_result, None
 
         # 2. LLM 호출
         logger.info(
@@ -86,7 +79,8 @@ class PageExtractor:
             # 4. 캐시 저장
             if use_cache and self.cache_manager:
                 content_hash = self.cache_manager.get_content_hash(page_text)
-                self.cache_manager.save_cache(content_hash, "page", result_json)
+                # 딕셔너리를 직접 전달 (JSON 문자열 변환 제거)
+                self.cache_manager.save_cache(content_hash, "page", result_dict)
                 logger.info(
                     f"[INFO] Cached page extraction result (hash: {content_hash[:8]}...)"
                 )

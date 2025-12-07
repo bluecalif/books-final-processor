@@ -64,16 +64,16 @@ class SummaryCacheManager:
 
     def get_cached_summary(
         self, content_hash: str, summary_type: str
-    ) -> Optional[str]:
+    ) -> Optional[Dict[str, Any]]:
         """
-        캐시된 요약 조회
+        캐시된 요약 조회 (새로운 시각화 구조)
         
         Args:
             content_hash: 콘텐츠 해시
             summary_type: 요약 타입 ("page" 또는 "chapter")
             
         Returns:
-            캐시된 요약 텍스트 또는 None
+            캐시된 구조화된 딕셔너리 또는 None (summary_text 필드 없이 각 필드가 루트 레벨에 있음)
         """
         try:
             cache_file = self.get_cache_path(content_hash, summary_type)
@@ -83,10 +83,24 @@ class SummaryCacheManager:
             with open(cache_file, 'r', encoding='utf-8') as f:
                 cached_data = json.load(f)
             
-            summary_text = cached_data.get("summary_text")
-            if summary_text:
+            # 새로운 시각화 구조: summary_text 필드가 없고 각 필드가 루트 레벨에 있음
+            if "summary_text" in cached_data:
+                # 기존 형식 (변환 전) - 변환 스크립트로 변환 필요
+                logger.warning(
+                    f"[WARNING] Old cache format detected for {summary_type} summary "
+                    f"(hash: {content_hash[:8]}...). Please run migration script."
+                )
+                return None
+            
+            # 메타데이터 필드 제외하고 반환
+            result = {
+                k: v for k, v in cached_data.items()
+                if k not in ("summary_type", "content_hash", "cached_at")
+            }
+            
+            if result:
                 logger.info(f"[INFO] Cache hit for {summary_type} summary (hash: {content_hash[:8]}...)")
-                return summary_text
+                return result
             
             return None
             
@@ -95,21 +109,22 @@ class SummaryCacheManager:
             return None
 
     def save_cache(
-        self, content_hash: str, summary_type: str, summary_text: str
+        self, content_hash: str, summary_type: str, structured_data: Dict[str, Any]
     ) -> None:
         """
-        요약 결과 캐시 저장
+        요약 결과 캐시 저장 (새로운 시각화 구조)
         
         Args:
             content_hash: 콘텐츠 해시
             summary_type: 요약 타입 ("page" 또는 "chapter")
-            summary_text: 요약 텍스트
+            structured_data: 구조화된 딕셔너리 (각 필드가 루트 레벨에 있음)
         """
         try:
             cache_file = self.get_cache_path(content_hash, summary_type)
             
+            # 구조화된 데이터에 메타데이터 추가
             cache_data = {
-                "summary_text": summary_text,
+                **structured_data,  # 각 필드를 루트 레벨로 전개
                 "summary_type": summary_type,
                 "content_hash": content_hash,
                 "cached_at": time.time()
