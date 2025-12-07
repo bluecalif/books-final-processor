@@ -638,6 +638,8 @@ class ExtractionService:
             f"total_chapters={total_chapters}, domain={domain}, parallel_workers=5"
         )
         
+        skipped_count = 0  # 2페이지 이하 챕터 스킵 카운트
+        
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {
                 executor.submit(extract_single_chapter, chapter): chapter
@@ -655,8 +657,17 @@ class ExtractionService:
                     continue
                 
                 if structured_data is None:
-                    failed_count += 1
-                    logger.warning(f"[WARNING] Chapter {chapter.id} structuring failed")
+                    # 2페이지 이하 챕터는 스킵 (의도된 동작)
+                    chapter_pages = list(range(chapter.start_page, chapter.end_page + 1))
+                    if len(chapter_pages) <= 2:
+                        skipped_count += 1
+                        logger.info(
+                            f"[SKIP] Chapter {chapter.order_index + 1} ({chapter.title}): "
+                            f"Skipped (2 pages or less: {len(chapter_pages)} pages)"
+                        )
+                    else:
+                        failed_count += 1
+                        logger.warning(f"[WARNING] Chapter {chapter.id} structuring failed")
                     continue
                 
                 # 토큰 통계 누적
@@ -691,16 +702,17 @@ class ExtractionService:
                     self.db.add(chapter_summary)
 
                 structured_count += 1
-                processed_count = structured_count + failed_count
                 
                 # 각 챕터 완료 시 진행 상황 출력
+                processed_count = structured_count + failed_count + skipped_count
                 elapsed_time = time_module.time() - structuring_start_time
-                avg_time_per_chapter = elapsed_time / processed_count
+                avg_time_per_chapter = elapsed_time / processed_count if processed_count > 0 else 0
                 remaining_chapters = total_chapters - processed_count
                 estimated_remaining_time = avg_time_per_chapter * remaining_chapters
                 
                 logger.info(
-                    f"[PROGRESS] Chapters: {structured_count} success, {failed_count} failed, "
+                    f"[PROGRESS] Chapters: {structured_count} success, "
+                    f"{failed_count} failed, {skipped_count} skipped, "
                     f"{processed_count}/{total_chapters} total "
                     f"({processed_count * 100 // total_chapters}%) | "
                     f"Elapsed: {elapsed_time:.1f}s | "
@@ -728,7 +740,8 @@ class ExtractionService:
         total_time = time_module.time() - structuring_start_time
         logger.info(
             f"[EXTRACTION_COMPLETE] Chapter structuring completed: "
-            f"success={structured_count}, failed={failed_count}, total={total_chapters} chapters, "
+            f"success={structured_count}, failed={failed_count}, skipped={skipped_count}, "
+            f"total={total_chapters} chapters, "
             f"time={total_time:.1f}s, "
             f"avg={total_time/max(structured_count + failed_count, 1):.2f}s/chapter"
         )
