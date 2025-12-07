@@ -260,3 +260,15 @@ def get_chapter_schema_class(domain: str) -> type[BaseChapterSchema]:
         "science": ScienceChapter,
     }
     return schema_map.get(domain, HumanitiesChapter)  # 기본값: HumanitiesChapter
+
+
+# =============================================================================
+# 책 전체 보고서 스키마 (Phase 6.3)
+# =============================================================================
+
+
+class BookSummarySchema(BaseModel):
+    """책 전체 요약 스키마 (Phase 1: 필수 항목)"""
+    
+    core_message: str = Field(..., description="책 전체의 한 줄 핵심 메시지")
+    summary_3_5_sentences: str = Field(..., description="책 전체의 3-5문장 요약")
