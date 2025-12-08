@@ -392,63 +392,40 @@
 
 ## Phase 7: 통합 및 테스트
 
-**목표**: 전체 파이프라인 통합 및 품질 향상
+**목표**: 챕터 6개 이상 도서에 대한 전체 파이프라인 통합 및 품질 향상
 
-> **참고**: 프론트엔드는 백엔드에서 종료하므로 프론트엔드 관련 항목은 제외
+> **참고**: 프론트엔드는 백엔드에서 종료하므로 프론트엔드 관련 항목은 제외  
+> **범위**: 챕터 6개 이상 도서만 처리 (7.1 구조 분석 강화 스킵)
 
-#### 7.1 구조 분석 강화 (챕터 1-2개 세분화 및 경계 탐지 개선)
+#### 7.1 구조 분석 강화 (스킵)
 
-**목표**: 챕터가 1개 또는 2개인 책의 구조 분석을 더 세분화하고, 챕터 경계 탐지 오류를 개선합니다.
-
-**현재 상황**:
-- 챕터 1개: 2권 (ID 188: MIT 스타트업 바이블, ID 242: 뉴스의 시대)
-- 챕터 2개: 3권 (ID 193: 강남되는 강북부동산은 정해져 있다, ID 230: 냉정한 이타주의자, ID 244: 다크 데이터)
-- **구조 분석 오류 사례**: Book 184 (AI지도책)
-  - order_index 중복 문제 (Order 2가 2개, Order 5가 2개)
-  - 2페이지 이하 잘못된 챕터 탐지 (Chapter ID 1023, 1024)
-  - 제목 추출 실패 (Title: "l")
-
-**보강 계획**:
-- [ ] 챕터 경계 탐지 개선 로직 추가
-  - **최소 챕터 페이지 수 검증**: 2페이지 이하 챕터는 자동으로 이전 챕터에 병합
-  - **챕터 제목 검증**: 제목이 1글자 이하인 경우 경고 및 수동 검토
-  - **order_index 중복 검증**: 같은 order_index를 가진 챕터가 있으면 경고
-  - Footer 기반 탐지 로직 개선 (일관성 검증)
-- [ ] 챕터 1-2개인 책의 구조 분석 개선 로직 추가
-  - Footer 기반 세부 섹션 탐지
-  - 페이지 내용 분석을 통한 논리적 구분점 탐지
-  - 수동 보정 인터페이스 (필요시)
-- [ ] ExtractionService에서 2페이지 이하 챕터 필터링 로직 추가
-  - `extract_chapters()` 메서드에서 챕터 페이지 수 확인
-  - 2페이지 이하 챕터는 서머리 생성에서 제외 (ChapterStructurer에서도 처리하지만 이중 검증)
-- [ ] 개선된 구조 분석 적용 및 재처리
-  - Book 184 (AI지도책) 구조 분석 재실행
-  - 챕터 1-2개인 5권에 대해 구조 분석 재실행
-  - 텍스트 파일 재생성
-- [ ] 재처리 후 요약 모듈 적용
-  - 챕터 세분화 완료된 책들에 대해 Phase 5 요약 모듈 적용
-
-**참고**: Phase 5 요약 모듈에서는 챕터 1-2개인 책은 제외하고 진행 (Phase 7.1 완료 후 적용)
+**결정**: 챕터 6개 이상 도서만 처리하므로 구조 분석 강화는 스킵합니다.
+- 챕터 1-2개인 책은 처리 대상에서 제외
+- 챕터 6개 이상 도서에 집중하여 전체 파이프라인 완성도 향상
 
 #### 7.2 백엔드 전체 파이프라인 E2E 테스트 (필수 완료)
 
+**목표**: 챕터 6개 이상 도서에 대한 전체 파이프라인을 실제 서버에서 E2E 테스트로 검증
+
 **⚠️ 중요: 모든 E2E 테스트는 실제 서버 실행, Mock 사용 금지, 실제 데이터만 사용** (실제 PDF, 실제 Upstage API, 실제 OpenAI LLM, 실제 DB)
 
-- [ ] **전체 플로우 E2E 테스트** (`tests/test_e2e.py`, 실제 서버 실행):
+- [ ] **전체 플로우 E2E 테스트** (`backend/tests/test_e2e_full_pipeline.py` 생성, 실제 서버 실행):
   - 1. `POST /api/books/upload` → 책 생성 (`uploaded`)
   - 2. 실제 Upstage API로 PDF 파싱 → `parsed` 상태 확인 → **캐시 저장 확인** (`data/cache/upstage/`)
   - 3. `GET /api/books/{id}/structure/candidates` → 구조 후보 생성 → **캐시된 파싱 결과 재사용 확인**
   - 4. `POST /api/books/{id}/structure/final` → 구조 확정 (`structured`)
   - 5. `POST /api/books/{id}/extract/pages` → 실제 LLM으로 페이지 엔티티 추출 (`page_summarized`) → **캐시 저장 확인** (`data/cache/summaries/`)
   - 6. `POST /api/books/{id}/extract/chapters` → 실제 LLM으로 챕터 구조화 (`summarized`) → **캐시 저장 확인**
-  - 7. `POST /api/books/{id}/summarize` → 실제 LLM으로 도서 서머리 생성 → **캐시 저장 확인**
-  - 8-10. 최종 결과 조회 검증 (`GET /api/books/{id}`, `/pages`, `/chapters`, `/summary`)
+  - 7. `POST /api/books/{id}/summarize` 또는 `BookReportService.generate_report()` → 실제 LLM으로 도서 서머리 생성 → **캐시 저장 확인**
+  - 8-10. 최종 결과 조회 검증 (`GET /api/books/{id}`, `/pages`, `/chapters`, 도서 서머리 파일 확인)
   - 각 단계별 데이터 정합성 검증 (DB 레코드, 관계, 상태 변경 순서)
   - **캐시 재사용 검증**: 동일 PDF/텍스트 재요청 시 캐시 히트 확인 (API 호출 없음)
+  - **테스트 대상**: 챕터 6개 이상 도서 (기존 `select_test_samples.py` 활용)
 - [ ] **다양한 시나리오 E2E 테스트** (실제 PDF 파일 및 실제 API 사용):
   - 다양한 형식의 실제 PDF (단면/양면 스캔, 한국어/영어, 다양한 챕터 구조)
-  - 엣지 케이스 (작은 PDF, 큰 PDF 100페이지 초과, 챕터 없는 책, 구조 불명확한 책)
-- [ ] **API 계약 검증** (`tests/test_api_contract.py`): 모든 API 엔드포인트 응답 스키마, Pydantic 스키마와 실제 응답 일치, Enum 값 정합성, 필드명/타입 일치
+  - 엣지 케이스 (작은 PDF, 큰 PDF 100페이지 초과, 구조 불명확한 책)
+  - 분야별 대표 도서 (역사/사회, 경제/경영, 인문/자기계발, 과학/기술)
+- [ ] **API 계약 검증** (`backend/tests/test_api_contract.py` 생성): 모든 API 엔드포인트 응답 스키마, Pydantic 스키마와 실제 응답 일치, Enum 값 정합성, 필드명/타입 일치
 - [ ] **에러 플로우 E2E 테스트**: 실제 Upstage API/LLM 실패 시나리오, 파일 형식 에러 처리
 
 #### 7.3 에러 처리 강화
@@ -456,8 +433,10 @@
 - [ ] LLM 요약 실패 처리 (`error_summarizing` 상태, 부분 실패 처리)
 - [ ] 재시도 로직 개선 (지수 백오프, 최대 재시도 횟수 제한)
 
-#### 7.4 성능 최적화
-- [ ] 페이지 요약 병렬 처리 (asyncio 또는 멀티프로세싱, 배치 처리)
+#### 7.4 성능 최적화 (필요한 부분만)
+
+**목표**: 성능 병목 지점만 최적화
+
 - [x] **캐싱 전략 구현 완료**: ✅ 완료
   - Upstage API 파싱 결과 캐싱 (`data/cache/upstage/`) ✅ 완료
   - OpenAI 요약 결과 캐싱 (`data/cache/summaries/`) ✅ 완료
@@ -469,19 +448,63 @@
     - `.tmp` 파일 삭제
     - 각 챕터별로 최신 캐시만 유지하고 나머지는 `backup/`으로 이동
     - 정리 결과 리포트 출력
-- [ ] DB 쿼리 최적화 (인덱스 추가, N+1 쿼리 방지)
+- [ ] **DB 쿼리 최적화** (필요한 부분만):
+  - 인덱스 추가 확인 및 보완 (`books.status`, 기존 인덱스 확인)
+  - N+1 쿼리 방지 (`ExtractionService`, `BookReportService`에서 `joinedload` 사용)
 
-#### 7.5 문서화
-- [ ] API 문서 작성 (FastAPI 자동 생성)
-- [ ] README.md 작성 (프로젝트 소개, 설치/실행 방법, 환경변수 설정, 테스트 실행 방법)
-- [ ] 코드 주석 보완
-- [ ] 테스트 문서 작성 (테스트 구조, E2E 테스트 실행 방법, 테스트 데이터 준비)
+#### 7.5 챕터 6개 이상 모두 처리 스크립트
 
-#### 7.6 백엔드 테스트 완료 검증 (프론트엔드 연동 전 필수)
-- [ ] **테스트 커버리지 확인**: 전체 80% 이상 (핵심 로직 100%), 핵심 모듈 90% 이상 (UpstageAPIClient 100%, PDFParser/StructureBuilder/SummaryService 90%+)
-- [ ] **모든 테스트 통과 확인**: 단위/통합/E2E 테스트 모두 통과, `pytest --cov=backend tests/` 실행 결과 확인
-- [ ] **API 계약 문서화**: OpenAPI 스키마 생성 (`/openapi.json`), API 문서, 요청/응답 예시
-- [ ] **테스트 리포트 생성**: 테스트 실행 결과 리포트, 커버리지 리포트, 실패 테스트 확인
+**목표**: 챕터 6개 이상인 모든 도서에 대해 전체 파이프라인 처리 (파싱 → 구조 분석 → 엔티티 추출 → 도서 서머리 생성)
+
+- [ ] **대량 처리 스크립트 작성** (`backend/scripts/process_all_books_6plus_chapters.py` 생성):
+  - DB에서 챕터 6개 이상인 도서 조회
+  - 각 도서별 처리 상태 확인
+  - 단계별 처리:
+    - 파싱 (`status < 'parsed'`)
+    - 구조 분석 (`status < 'structured'`)
+    - 페이지 엔티티 추출 (`status < 'page_summarized'`)
+    - 챕터 구조화 (`status < 'summarized'`)
+    - 도서 서머리 생성 (`BookReportService.generate_report()`)
+  - 진행 상황 로깅 (`data/logs/batch_processing/`)
+  - 최종 리포트 생성 (성공/실패 통계, 처리 시간, 비용 추정)
+- [ ] **스크립트 실행 및 검증**:
+  - 모든 챕터 6개 이상 도서 처리 완료 확인
+  - 각 단계별 상태 업데이트 확인
+  - 도서 서머리 파일 생성 확인 (`data/output/book_summaries/`)
+  - 에러 발생 시 로그 확인 및 재처리 가능 여부 확인
+
+#### 7.6 문서 작성 및 완료
+
+**목표**: 프로젝트 문서화 완료 및 최종 검증
+
+- [ ] **API 문서 작성** (`docs/API.md` 생성 또는 README.md에 통합):
+  - FastAPI 자동 생성 문서 링크 (`/docs`, `/openapi.json`)
+  - 주요 API 엔드포인트 설명
+  - 요청/응답 예시
+  - 에러 코드 및 처리 방법
+- [ ] **README.md 업데이트**:
+  - 프로젝트 완료 상태 업데이트
+  - Phase 7 완료 내용 반영
+  - 챕터 6개 이상 도서 처리 방법 안내
+  - 전체 파이프라인 실행 방법
+- [ ] **코드 주석 보완**:
+  - `backend/api/services/extraction_service.py`: 주요 메서드 docstring 보완
+  - `backend/api/services/book_report_service.py`: 주요 메서드 docstring 보완
+  - `backend/parsers/upstage_api_client.py`: 에러 처리 로직 주석 추가
+  - `backend/summarizers/llm_chains.py`: 에러 처리 로직 주석 추가
+- [ ] **테스트 문서 작성** (`docs/TESTING.md` 생성):
+  - 테스트 구조 설명
+  - E2E 테스트 실행 방법
+  - 테스트 데이터 준비 방법
+  - 테스트 커버리지 확인 방법
+  - 문제 해결 가이드
+- [ ] **프로젝트 완료 검증**:
+  - [ ] 모든 E2E 테스트 통과
+  - [ ] 챕터 6개 이상 도서 전체 처리 완료
+  - [ ] API 문서 작성 완료
+  - [ ] README.md 업데이트 완료
+  - [ ] 코드 주석 보완 완료
+  - [ ] 테스트 문서 작성 완료
 
 **백엔드 E2E 테스트 완료 기준**:
 - ✅ Phase 1-6 모든 단계별 테스트 통과
@@ -494,7 +517,13 @@
 
 **검증**: 백엔드 단독으로 모든 기능이 실제 데이터로 정상 작동함을 E2E 테스트로 확인
 
-**⚠️ Git 커밋**: Phase 7 완료 후 `git add .`, `git commit -m "[Phase 7] 백엔드 E2E 테스트 완료 및 통합 검증"`, `git push origin main`
+**⚠️ Git 커밋**: 각 sub phase 완료 후 즉시 커밋
+- 7.2 완료: `git commit -m "[Phase 7.2] 전체 파이프라인 E2E 테스트 완료"`
+- 7.3 완료: `git commit -m "[Phase 7.3] 에러 처리 강화 완료"`
+- 7.4 완료: `git commit -m "[Phase 7.4] 성능 최적화 완료"`
+- 7.5 완료: `git commit -m "[Phase 7.5] 챕터 6개 이상 도서 전체 처리 완료"`
+- 7.6 완료: `git commit -m "[Phase 7.6] 문서 작성 및 프로젝트 완료"`
+- Phase 7 전체 완료 후: `git commit -m "[Phase 7] 통합 및 테스트 완료 (챕터 6개 이상 도서 대상)"`
 
 ---
 
