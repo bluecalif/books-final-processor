@@ -6,17 +6,9 @@ E2E 테스트 공통 유틸리티 함수
 import time
 import httpx
 import re
-import sys
-import io
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from backend.config.settings import settings
-
-# 한글 출력을 위한 인코딩 설정
-if sys.platform == 'win32':
-    # Windows 환경에서 UTF-8 인코딩 설정
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 
 def wait_for_status_with_progress(

@@ -18,14 +18,6 @@ PDF 업로드 → 파싱 → 구조분석 → 페이지엔티티 → 챕터서�
 - 모든 단계에서 캐시 확인 및 재사용 검증
 """
 import pytest
-import sys
-import io
-
-# 한글 출력을 위한 인코딩 설정
-if sys.platform == 'win32':
-    # Windows 환경에서 UTF-8 인코딩 설정
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 import httpx
 import time
 import hashlib
