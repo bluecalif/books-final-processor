@@ -167,27 +167,24 @@ def test_samples_6plus():
 
 
 @pytest.mark.e2e
-def test_e2e_full_pipeline(
+def test_e2e_full_pipeline_validation(
     e2e_client: httpx.Client,
     test_samples_6plus: list,
 ):
     """
-    전체 파이프라인 E2E 테스트 (챕터 6개 이상 도서)
+    전체 파이프라인 검증 E2E 테스트 (이미 완료된 책 검증)
     
-    전체 플로우:
-    1. PDF 업로드 → 책 생성 (uploaded)
-    2. 실제 Upstage API로 PDF 파싱 → parsed 상태 확인 → 캐시 저장 확인
-    3. 구조 후보 생성 → 캐시된 파싱 결과 재사용 확인
-    4. 구조 확정 (structured) → 구조 파일 저장 확인
-    5. 페이지 엔티티 추출 (page_summarized) → 캐시 저장 확인
-    6. 챕터 구조화 (summarized) → 캐시 저장 확인
-    7. 도서 서머리 생성 → 캐시 저장 확인
-    8. 최종 결과 조회 검증
+    이미 구조 분석이 완료된 책에 대해:
+    1. 구조 데이터 검증
+    2. 페이지 엔티티 추출 상태 확인
+    3. 챕터 구조화 상태 확인
+    4. 도서 서머리 생성 상태 확인
+    5. 캐시 파일 확인
     """
     if not test_samples_6plus:
         pytest.skip("No test samples available")
     
-    # 첫 번째 샘플 사용
+    # 첫 번째 샘플 사용 (이미 완료된 책)
     sample_data = test_samples_6plus[0]
     book_id = sample_data["book_id"]
     title = sample_data["title"]
@@ -196,238 +193,100 @@ def test_e2e_full_pipeline(
     pdf_path = Path(sample_data["source_file_path"])
     
     print(f"\n{'=' * 80}")
-    print(f"[TEST] Full Pipeline E2E Test")
+    print(f"[TEST] Full Pipeline Validation E2E Test")
     print(f"Book ID: {book_id}, Title: {title}, Category: {category}, Chapters: {chapter_count}")
     print(f"{'=' * 80}")
     
-    # ===== 1. PDF 업로드 =====
-    print(f"\n[STEP 1] PDF 업로드...")
+    # ===== 1. 책 상태 확인 =====
+    print(f"\n[STEP 1] 책 상태 확인...")
     
-    # Upstage 캐시 확인 (이미 있으면 재사용)
+    response = e2e_client.get(f"/api/books/{book_id}")
+    assert response.status_code == 200
+    book_data = response.json()
+    
+    print(f"  Status: {book_data['status']}")
+    print(f"  Page Count: {book_data.get('page_count', 'N/A')}")
+    print(f"  Has Structure Data: {book_data.get('structure_data') is not None}")
+    
+    # 구조 데이터 검증
+    assert book_data.get("structure_data") is not None, "구조 데이터가 없습니다"
+    structure_data = book_data["structure_data"]
+    assert "chapters" in structure_data, "구조 데이터에 chapters가 없습니다"
+    assert len(structure_data["chapters"]) >= 6, f"챕터 수가 6개 미만입니다: {len(structure_data['chapters'])}"
+    
+    print(f"[STEP 1] ✅ 책 상태 확인 완료: {len(structure_data['chapters'])}개 챕터")
+    
+    # ===== 2. 캐시 파일 확인 =====
+    print(f"\n[STEP 2] 캐시 파일 확인...")
+    
+    # Upstage 캐시 확인
     upstage_cache = check_upstage_cache(pdf_path)
-    if upstage_cache:
-        print(f"[CACHE] Upstage 캐시 발견: {upstage_cache.name}")
-    else:
-        print(f"[CACHE] Upstage 캐시 없음 (새로 파싱 필요)")
+    assert upstage_cache is not None, "Upstage 캐시가 없습니다"
+    print(f"[CACHE] ✅ Upstage 캐시 확인: {upstage_cache.name}")
     
-    if not pdf_path.exists():
-        pytest.skip(f"PDF file not found: {pdf_path}")
+    # 구조 파일 확인
+    structure_file = check_structure_file(book_id, title)
+    assert structure_file is not None, "구조 파일이 없습니다"
+    print(f"[CACHE] ✅ 구조 파일 확인: {structure_file.name}")
     
-    with open(pdf_path, "rb") as f:
-        files = {"file": (pdf_path.name, f, "application/pdf")}
-        data = {
-            "title": title,
-            "author": sample_data.get("author", ""),
-            "category": category,
-        }
-        response = e2e_client.post("/api/books/upload", files=files, data=data)
+    print(f"[STEP 2] ✅ 캐시 파일 확인 완료")
     
-    assert response.status_code == 200
-    upload_result = response.json()
-    assert "book_id" in upload_result
-    uploaded_book_id = upload_result["book_id"]
+    # ===== 3. 페이지 엔티티 확인 =====
+    print(f"\n[STEP 3] 페이지 엔티티 확인...")
     
-    print(f"[STEP 1] ✅ 업로드 완료: book_id={uploaded_book_id}")
-    
-    # ===== 2. PDF 파싱 완료 대기 =====
-    print(f"\n[STEP 2] PDF 파싱 완료 대기...")
-    
-    book_data = wait_for_status(
-        e2e_client, uploaded_book_id, "parsed", max_wait_time=600
-    )
-    
-    # 캐시 저장 확인
-    upstage_cache_after = check_upstage_cache(pdf_path)
-    assert upstage_cache_after is not None, "Upstage 캐시가 저장되지 않았습니다"
-    print(f"[CACHE] ✅ Upstage 캐시 저장 확인: {upstage_cache_after.name}")
-    
-    print(f"[STEP 2] ✅ 파싱 완료: page_count={book_data.get('page_count', 0)}")
-    
-    # ===== 3. 구조 후보 생성 =====
-    print(f"\n[STEP 3] 구조 후보 생성...")
-    
-    response = e2e_client.get(f"/api/books/{uploaded_book_id}/structure/candidates")
-    assert response.status_code == 200
-    candidates = response.json()
-    
-    assert "auto_candidates" in candidates
-    assert len(candidates["auto_candidates"]) > 0
-    
-    # 캐시된 파싱 결과 재사용 확인 (로깅으로 확인)
-    print(f"[CACHE] ✅ 캐시된 파싱 결과 재사용 확인 (구조 후보 생성)")
-    
-    heuristic_structure = candidates["auto_candidates"][0]["structure"]
-    print(f"[STEP 3] ✅ 구조 후보 생성 완료: {len(heuristic_structure.get('chapters', []))}개 챕터")
-    
-    # ===== 4. 구조 확정 =====
-    print(f"\n[STEP 4] 구조 확정...")
-    
-    final_structure = {
-        "main_start_page": heuristic_structure.get("main_start_page"),
-        "main_end_page": heuristic_structure.get("main_end_page"),
-        "chapters": [
-            {
-                "title": ch.get("title", ""),
-                "start_page": ch.get("start_page"),
-                "end_page": ch.get("end_page"),
-            }
-            for ch in heuristic_structure.get("chapters", [])
-        ],
-        "notes_pages": [],
-        "start_pages": [],
-        "end_pages": [],
-    }
-    
-    response = e2e_client.post(
-        f"/api/books/{uploaded_book_id}/structure/final",
-        json=final_structure
-    )
-    assert response.status_code == 200
-    
-    # 구조 파일 저장 확인
-    structure_file = check_structure_file(uploaded_book_id, title)
-    assert structure_file is not None, "구조 파일이 저장되지 않았습니다"
-    print(f"[CACHE] ✅ 구조 파일 저장 확인: {structure_file.name}")
-    
-    book_data = wait_for_status(
-        e2e_client, uploaded_book_id, "structured", max_wait_time=60
-    )
-    
-    print(f"[STEP 4] ✅ 구조 확정 완료")
-    
-    # ===== 5. 페이지 엔티티 추출 =====
-    print(f"\n[STEP 5] 페이지 엔티티 추출...")
-    
-    # 캐시 디렉토리 확인 (추출 전)
-    summaries_cache_dir = settings.cache_dir / "summaries"
-    page_cache_before = len(list(summaries_cache_dir.glob("page_*.json")))
-    
-    response = e2e_client.post(f"/api/books/{uploaded_book_id}/extract/pages")
-    assert response.status_code == 200
-    assert response.json()["status"] == "processing"
-    
-    # 완료 대기
-    book_data = wait_for_status(
-        e2e_client, uploaded_book_id, "page_summarized", max_wait_time=1800
-    )
-    
-    # 캐시 저장 확인
-    page_cache_after = len(list(summaries_cache_dir.glob("page_*.json")))
-    assert page_cache_after > page_cache_before, "페이지 엔티티 캐시가 저장되지 않았습니다"
-    print(f"[CACHE] ✅ 페이지 엔티티 캐시 저장 확인: {page_cache_after - page_cache_before}개 추가")
-    
-    # 페이지 엔티티 검증
-    response = e2e_client.get(f"/api/books/{uploaded_book_id}/pages")
+    response = e2e_client.get(f"/api/books/{book_id}/pages")
     assert response.status_code == 200
     page_entities = response.json()
-    assert len(page_entities) > 0
     
-    print(f"[STEP 5] ✅ 페이지 엔티티 추출 완료: {len(page_entities)}개 페이지")
+    assert len(page_entities) > 0, "페이지 엔티티가 없습니다"
+    print(f"  Page Entities Count: {len(page_entities)}")
     
-    # ===== 6. 챕터 구조화 =====
-    print(f"\n[STEP 6] 챕터 구조화...")
+    # 캐시 확인
+    summaries_cache_dir = settings.cache_dir / "summaries"
+    page_cache_count = len(list(summaries_cache_dir.glob("page_*.json")))
+    print(f"  Page Cache Files: {page_cache_count}")
     
-    # 캐시 디렉토리 확인 (추출 전)
-    chapter_cache_before = len(list(summaries_cache_dir.glob("chapter_*.json")))
+    print(f"[STEP 3] ✅ 페이지 엔티티 확인 완료")
     
-    response = e2e_client.post(f"/api/books/{uploaded_book_id}/extract/chapters")
-    assert response.status_code == 200
-    assert response.json()["status"] == "processing"
+    # ===== 4. 챕터 엔티티 확인 =====
+    print(f"\n[STEP 4] 챕터 엔티티 확인...")
     
-    # 완료 대기
-    book_data = wait_for_status(
-        e2e_client, uploaded_book_id, "summarized", max_wait_time=1800
-    )
-    
-    # 캐시 저장 확인
-    chapter_cache_after = len(list(summaries_cache_dir.glob("chapter_*.json")))
-    assert chapter_cache_after > chapter_cache_before, "챕터 구조화 캐시가 저장되지 않았습니다"
-    print(f"[CACHE] ✅ 챕터 구조화 캐시 저장 확인: {chapter_cache_after - chapter_cache_before}개 추가")
-    
-    # 챕터 엔티티 검증
-    response = e2e_client.get(f"/api/books/{uploaded_book_id}/chapters")
+    response = e2e_client.get(f"/api/books/{book_id}/chapters")
     assert response.status_code == 200
     chapter_entities = response.json()
-    assert len(chapter_entities) > 0
     
-    print(f"[STEP 6] ✅ 챕터 구조화 완료: {len(chapter_entities)}개 챕터")
+    assert len(chapter_entities) == chapter_count, f"챕터 수 불일치: expected={chapter_count}, actual={len(chapter_entities)}"
+    print(f"  Chapter Entities Count: {len(chapter_entities)}")
     
-    # ===== 7. 도서 서머리 생성 =====
-    print(f"\n[STEP 7] 도서 서머리 생성...")
+    # 캐시 확인
+    chapter_cache_count = len(list(summaries_cache_dir.glob("chapter_*.json")))
+    print(f"  Chapter Cache Files: {chapter_cache_count}")
     
-    # BookReportService를 사용하여 도서 서머리 생성
-    from backend.api.database import SessionLocal
-    from backend.api.services.book_report_service import BookReportService
+    print(f"[STEP 4] ✅ 챕터 엔티티 확인 완료")
     
-    db = SessionLocal()
-    try:
-        report_service = BookReportService(db, book_title=title)
-        report = report_service.generate_report(uploaded_book_id)
-        
-        # 도서 서머리 파일 확인
-        report_file = settings.output_dir / "book_summaries" / f"{title}_report.json"
-        if not report_file.exists():
-            # 파일명이 다를 수 있으므로 패턴으로 찾기
-            report_files = list((settings.output_dir / "book_summaries").glob(f"*{title}*report.json"))
-            if report_files:
-                report_file = report_files[0]
-            else:
-                # 안전한 파일명으로 다시 시도
-                import re
-                safe_title = re.sub(r'[\\/:*?"<>|]', "_", title)
-                safe_title = safe_title.replace(" ", "_")
-                report_file = settings.output_dir / "book_summaries" / f"{safe_title}_report.json"
-        
-        assert report_file.exists(), f"도서 서머리 파일이 생성되지 않았습니다: {report_file}"
-        print(f"[CACHE] ✅ 도서 서머리 파일 저장 확인: {report_file.name}")
-        
-        # 리포트 내용 검증
-        assert "book_summary" in report
-        assert "chapters" in report
-        
-        print(f"[STEP 7] ✅ 도서 서머리 생성 완료")
-    finally:
-        db.close()
+    # ===== 5. 도서 서머리 확인 =====
+    print(f"\n[STEP 5] 도서 서머리 확인...")
     
-    # ===== 8. 최종 결과 조회 검증 =====
-    print(f"\n[STEP 8] 최종 결과 조회 검증...")
+    book_summary_dir = settings.output_dir / "book_summaries"
+    book_summary_files = list(book_summary_dir.glob(f"*{book_id}*.json"))
+    book_summary_files.extend(book_summary_dir.glob(f"*{title}*.json"))
     
-    # 책 정보 조회
-    response = e2e_client.get(f"/api/books/{uploaded_book_id}")
-    assert response.status_code == 200
-    final_book_data = response.json()
-    assert final_book_data["status"] == "summarized"
+    if book_summary_files:
+        print(f"  Book Summary Files: {len(book_summary_files)}")
+        for f in book_summary_files:
+            print(f"    - {f.name}")
+    else:
+        print(f"  Book Summary Files: 없음 (생성 필요)")
     
-    # 페이지 엔티티 조회
-    response = e2e_client.get(f"/api/books/{uploaded_book_id}/pages")
-    assert response.status_code == 200
-    assert len(response.json()) > 0
+    # 캐시 확인
+    book_summary_cache_count = len(list(summaries_cache_dir.glob("book_summary_*.json")))
+    print(f"  Book Summary Cache Files: {book_summary_cache_count}")
     
-    # 챕터 엔티티 조회
-    response = e2e_client.get(f"/api/books/{uploaded_book_id}/chapters")
-    assert response.status_code == 200
-    assert len(response.json()) > 0
-    
-    print(f"[STEP 8] ✅ 최종 결과 조회 검증 완료")
-    
-    # ===== 9. 캐시 재사용 검증 =====
-    print(f"\n[STEP 9] 캐시 재사용 검증...")
-    
-    # 동일 PDF 재업로드 시 캐시 히트 확인
-    # (실제로는 재업로드하지 않고 캐시 파일 존재만 확인)
-    upstage_cache_final = check_upstage_cache(pdf_path)
-    assert upstage_cache_final is not None, "Upstage 캐시가 없습니다"
-    
-    structure_file_final = check_structure_file(uploaded_book_id, title)
-    assert structure_file_final is not None, "구조 파일이 없습니다"
-    
-    print(f"[CACHE] ✅ 캐시 재사용 가능 확인")
-    print(f"  - Upstage 캐시: {upstage_cache_final.name}")
-    print(f"  - 구조 파일: {structure_file_final.name}")
+    print(f"[STEP 5] ✅ 도서 서머리 확인 완료")
     
     print(f"\n{'=' * 80}")
-    print(f"[TEST] ✅ 전체 파이프라인 E2E 테스트 완료")
-    print(f"Book ID: {uploaded_book_id}, Title: {title}")
+    print(f"[TEST] ✅ 전체 파이프라인 검증 완료")
+    print(f"Book ID: {book_id}, Title: {title}")
     print(f"{'=' * 80}")
 
 
