@@ -1,7 +1,7 @@
 """책 관련 API 라우터"""
 import logging
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 
@@ -76,8 +76,9 @@ def _parse_book_background(book_id: int):
 @router.post("/upload", response_model=dict)
 async def upload_book(
     file: UploadFile = File(...),
-    title: Optional[str] = Query(None, description="책 제목"),
-    author: Optional[str] = Query(None, description="저자"),
+    title: str = Form(..., description="책 제목 (필수)"),
+    author: Optional[str] = Form(None, description="저자"),
+    category: Optional[str] = Form(None, description="분야"),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     db: Session = Depends(get_db),
 ):
@@ -153,8 +154,8 @@ async def upload_book(
         logger.info(f"[RETURN] BookService() 반환값: service_id={service_id}")
         
         logger.info("[CALL] service.create_book() 호출 시작")
-        logger.info(f"[PARAM] tmp_path={tmp_path_str}, title={title}, author={author}")
-        book = service.create_book(tmp_path, title=title, author=author)
+        logger.info(f"[PARAM] tmp_path={tmp_path_str}, title={title}, author={author}, category={category}")
+        book = service.create_book(tmp_path, title=title, author=author, category=category)
         book_id = book.id
         book_status = book.status
         logger.info(f"[RETURN] create_book() 반환값: book_id={book_id}, status={book_status}")

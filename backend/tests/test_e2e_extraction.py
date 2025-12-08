@@ -521,7 +521,7 @@ def test_e2e_extraction_per_book(
     else:
         print(f"[WARNING] Token stats file not found: {token_stats_file}")
 
-    print(f"[TEST] ✅ All tests passed for book_id={book_id} ({title})")
+    print(f"[TEST] [OK] All tests passed for book_id={book_id} ({title})")
 
 
 @pytest.mark.e2e
@@ -531,7 +531,7 @@ def test_e2e_extraction_full_flow(e2e_client: httpx.Client, test_samples):
 
     구조 확정된 책 (챕터 6개 이상) → 페이지 엔티티 추출 → 챕터 구조화
 
-    ⚠️ 현재는 첫 번째 책만 테스트 (시간 절약)
+    # 현재는 첫 번째 책만 테스트 (시간 절약)
     """
     if not test_samples:
         pytest.skip("No test samples available")

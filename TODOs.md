@@ -409,11 +409,23 @@
 
 **⚠️ 중요: 모든 E2E 테스트는 실제 서버 실행, Mock 사용 금지, 실제 데이터만 사용** (실제 PDF, 실제 Upstage API, 실제 OpenAI LLM, 실제 DB)
 
+**⚠️ 구조 분석 캐시 재사용 원칙**:
+- 모든 책은 구조 분석까지는 기존 캐시를 사용해야 합니다.
+- `StructureService.get_structure_candidates()`는 PDF 해시 기반으로 `data/output/structure/{hash_6}_{title}_structure.json` 파일을 찾아 재사용합니다.
+- 구조 파일이 있으면 구조 분석을 건너뛰고 캐시된 결과를 사용합니다.
+- 구조 파일이 없을 때만 새로 구조 분석을 수행합니다.
+
+- [ ] **구조 분석 캐시 재사용 로직 구현** (`backend/api/services/structure_service.py`):
+  - [x] `_get_pdf_hash_6()`: PDF 해시 6글자 계산 메서드 추가 ✅ 완료
+  - [x] `_find_structure_file_by_hash()`: PDF 해시 기반 구조 파일 찾기 메서드 추가 ✅ 완료
+  - [x] `_convert_json_to_structure_format()`: JSON 형식을 StructureBuilder 출력 형식으로 변환 메서드 추가 ✅ 완료
+  - [x] `get_structure_candidates()`: 구조 파일 캐시 확인 및 재사용 로직 추가 ✅ 완료
 - [ ] **전체 플로우 E2E 테스트** (`backend/tests/test_e2e_full_pipeline.py` 수정 필요):
   - **1단계: 구조 분석 완료된 4권 캐시 검증 테스트** (완료된 책 검증):
     - 이미 구조 분석이 완료된 4권 (Book ID: 175, 176, 177, 184)에 대해 캐시 활용 검증
     - 구조 데이터, 페이지 엔티티, 챕터 엔티티, 도서 서머리 상태 확인
     - Upstage 캐시, 구조 파일, 요약 캐시 확인
+    - **구조 분석 캐시 재사용 검증**: 구조 후보 생성 시 구조 파일을 재사용하는지 확인
   - **2단계: 챕터 6개 이상 도서 리스트 생성 및 보고**:
     - `select_test_samples.py` 실행하여 챕터 6개 이상 도서 리스트 생성
     - 총 몇 권인지 사용자에게 보고
@@ -421,6 +433,7 @@
     - 리스트 중 이미 사용된 4권 제외한 맨 첫 번째 한 권 선택
     - 전체 플로우: 업로드 → 파싱 → 구조 분석 → 페이지 추출 → 챕터 구조화 → 도서 서머리 생성
     - 각 단계별 캐시 저장/재사용 검증
+    - **구조 분석 단계**: 이미 구조 분석이 완료된 책의 경우 구조 파일 캐시를 재사용하는지 확인
   - **4단계: 나머지 챕터 6개 이상 도서는 7.5에서 일괄 처리** (7.2 완료 후 7.5로 이관)
 - [x] **캐시 활용 검증 테스트** (`test_e2e_cache_verification`): 모든 챕터 6개 이상 도서에 대해 Upstage 캐시 및 구조 파일 확인
 - [x] **API 계약 검증** (`backend/tests/test_api_contract.py` 생성 완료): 모든 API 엔드포인트 응답 스키마, Pydantic 스키마와 실제 응답 일치, Enum 값 정합성, 필드명/타입 일치
@@ -456,6 +469,13 @@
 
 **⚠️ 참고**: 7.2에서 테스트한 4권 (Book ID: 175, 176, 177, 184) + 새로 테스트한 1권을 제외한 나머지 챕터 6개 이상 도서를 일괄 처리
 
+**⚠️ 구조 분석 캐시 재사용 원칙**:
+- 모든 책은 구조 분석까지는 기존 캐시를 사용해야 합니다.
+- `StructureService.get_structure_candidates()`는 PDF 해시 기반으로 `data/output/structure/{hash_6}_{title}_structure.json` 파일을 찾아 재사용합니다.
+- 구조 파일이 있으면 구조 분석을 건너뛰고 캐시된 결과를 사용합니다.
+- 구조 파일이 없을 때만 새로 구조 분석을 수행합니다.
+- **이미 구조 분석이 완료된 모든 책은 구조 파일 캐시를 재사용하여 불필요한 구조 분석을 방지합니다.**
+
 **⚠️ 중요: 진행률 및 소요 시간 표시 필수**:
 - 모든 파이프라인 테스트와 7.5 스크립트에서 진행률, 소요 시간, 남은 시간 표시 필수
 - 진행률: `{current}/{total} ({progress_pct}%)`
@@ -468,13 +488,14 @@
   - DB에서 챕터 6개 이상인 도서 조회
   - 각 도서별 처리 상태 확인
   - 단계별 처리:
-    - 파싱 (`status < 'parsed'`)
-    - 구조 분석 (`status < 'structured'`)
-    - 페이지 엔티티 추출 (`status < 'page_summarized'`)
-    - 챕터 구조화 (`status < 'summarized'`)
+    - 파싱 (`status < 'parsed'`): Upstage 캐시 재사용
+    - 구조 분석 (`status < 'structured'`): **구조 파일 캐시 재사용** (`StructureService.get_structure_candidates()`가 자동으로 캐시 확인 및 재사용)
+    - 페이지 엔티티 추출 (`status < 'page_summarized'`): 요약 캐시 재사용
+    - 챕터 구조화 (`status < 'summarized'`): 요약 캐시 재사용
     - 도서 서머리 생성 (`BookReportService.generate_report()`)
   - 진행 상황 로깅 (`data/logs/batch_processing/`)
   - 최종 리포트 생성 (성공/실패 통계, 처리 시간, 비용 추정)
+  - **캐시 재사용 통계**: 각 단계별 캐시 히트율 리포트 포함
 - [ ] **스크립트 실행 및 검증**:
   - 모든 챕터 6개 이상 도서 처리 완료 확인
   - 각 단계별 상태 업데이트 확인

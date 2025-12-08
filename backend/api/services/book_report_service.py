@@ -97,10 +97,34 @@ class BookReportService:
             "category": book.category or "Unknown",
         }
         
+        # 전체 단계 수 계산 (나중에 사용하기 위해 미리 계산)
+        from backend.summarizers.schemas import get_domain_from_category
+        domain = get_domain_from_category(book.category or "인문/자기계발")
+        
+        domain_entity_map = {
+            "history": ["timeline", "geo_map", "structure_layer"],
+            "economy": ["frameworks", "scenarios", "playbooks"],
+            "humanities": ["life_themes", "practice_recipes", "dilemmas", "identity_shifts"],
+            "science": ["technologies", "systems", "applications", "risks_ethics"],
+        }
+        domain_entities = domain_entity_map.get(domain, [])
+        entity_types = ["insights", "key_events", "key_examples", "key_persons", "key_concepts"]
+        # book_summary(1) + entity_types(5) + main_arguments(1) + domain_entities(N)
+        total_steps = 1 + len(entity_types) + 1 + len(domain_entities)
+        
         logger.info("[INFO] Generating book-level summary...")
+        import time as time_module
+        report_start_time = time_module.time()
+        current_step = 0
+        progress_pct = int((current_step / total_steps) * 100) if total_steps > 0 else 0
+        logger.info(f"[PROGRESS] Book report: {current_step}/{total_steps} steps ({progress_pct}%) | Step: book_summary")
         book_summary, book_usage = self.book_summary_chain.summarize_book(
             chapter_data_list, book_context
         )
+        current_step = 1
+        progress_pct = int((current_step / total_steps) * 100) if total_steps > 0 else 0
+        elapsed_time = time_module.time() - report_start_time
+        logger.info(f"[PROGRESS] Book report: {current_step}/{total_steps} steps ({progress_pct}%) | Elapsed: {elapsed_time:.1f}s | Step: book_summary completed")
         
         if book_usage:
             logger.info(
@@ -111,11 +135,16 @@ class BookReportService:
             )
         
         # 5. 엔티티 집계 (LLM) - Phase 1 필수 항목
-        entity_types = ["insights", "key_events", "key_examples", "key_persons", "key_concepts"]
         entity_synthesis = {}
         total_entity_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         
-        for entity_type in entity_types:
+        total_entity_steps = len(entity_types)
+        completed_entity_steps = 0
+        
+        for idx, entity_type in enumerate(entity_types):
+            completed_entity_steps = idx
+            progress_pct = int((completed_entity_steps / total_entity_steps) * 100) if total_entity_steps > 0 else 0
+            logger.info(f"[PROGRESS] Entity synthesis: {completed_entity_steps}/{total_entity_steps} steps ({progress_pct}%) | Step: {entity_type}")
             logger.info(f"[INFO] Synthesizing {entity_type}...")
             
             # 챕터별 엔티티 수집
@@ -146,6 +175,11 @@ class BookReportService:
                 logger.warning(f"[WARNING] No {entity_type} found in chapter summaries")
         
         # Phase 2: main_arguments 엔티티 집계 (챕터별 argument_flow.main_claims 집계)
+        # total_steps는 이미 위에서 계산됨
+        current_step = 1 + len(entity_types)
+        progress_pct = int((current_step / total_steps) * 100) if total_steps > 0 else 0
+        elapsed_time = time_module.time() - report_start_time
+        logger.info(f"[PROGRESS] Book report: {current_step}/{total_steps} steps ({progress_pct}%) | Elapsed: {elapsed_time:.1f}s | Step: main_arguments")
         logger.info("[INFO] Synthesizing main_arguments...")
         chapter_main_claims = []
         for cs in chapter_summaries:
@@ -178,18 +212,12 @@ class BookReportService:
             logger.warning("[WARNING] No main_arguments found in chapter summaries")
         
         # Phase 2: 도메인별 엔티티 집계
-        from backend.summarizers.schemas import get_domain_from_category
-        domain = get_domain_from_category(book.category or "인문/자기계발")
-        
-        domain_entity_map = {
-            "history": ["timeline", "geo_map", "structure_layer"],
-            "economy": ["frameworks", "scenarios", "playbooks"],
-            "humanities": ["life_themes", "practice_recipes", "dilemmas", "identity_shifts"],
-            "science": ["technologies", "systems", "applications", "risks_ethics"],
-        }
-        
-        domain_entities = domain_entity_map.get(domain, [])
-        for entity_type in domain_entities:
+        # domain과 domain_entity_map, domain_entities는 이미 위에서 계산됨
+        for idx, entity_type in enumerate(domain_entities):
+            current_step = 1 + len(entity_types) + 1 + idx
+            progress_pct = int((current_step / total_steps) * 100) if total_steps > 0 else 0
+            elapsed_time = time_module.time() - report_start_time
+            logger.info(f"[PROGRESS] Book report: {current_step}/{total_steps} steps ({progress_pct}%) | Elapsed: {elapsed_time:.1f}s | Step: {entity_type} (domain: {domain})")
             logger.info(f"[INFO] Synthesizing {entity_type} (domain: {domain})...")
             
             # 챕터별 도메인 엔티티 수집

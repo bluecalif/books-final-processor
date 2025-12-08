@@ -186,7 +186,12 @@ class ExtractionService:
         logger.info(f"[INFO] Chapter info map created: {len(chapter_info_map)} pages mapped to {len(chapters)} chapters")
 
         # 5. PageExtractor 초기화 (책 제목 전달하여 캐시 폴더 분리)
-        book_title = book.title or f"book_{book_id}"
+        # 책 제목이 없으면 경고 출력 (폴더명으로 사용)
+        if not book.title:
+            logger.warning(f"[WARNING] 책제목 없음 - book_id={book_id}, book_title=None, safe_title=book_{book_id}")
+            book_title = f"book_{book_id}"
+        else:
+            book_title = book.title
         page_extractor = PageExtractor(domain, enable_cache=True, book_title=book_title)
         
         # 토큰 통계 초기화
@@ -503,7 +508,12 @@ class ExtractionService:
         logger.info(f"[INFO] Domain: {domain} (category: {book.category})")
 
         # 4. ChapterStructurer 초기화 (책 제목 전달하여 캐시 폴더 분리)
-        book_title = book.title or f"book_{book_id}"
+        # 책 제목이 없으면 경고 출력 (폴더명으로 사용)
+        if not book.title:
+            logger.warning(f"[WARNING] 책제목 없음 - book_id={book_id}, book_title=None, safe_title=book_{book_id}")
+            book_title = f"book_{book_id}"
+        else:
+            book_title = book.title
         chapter_structurer = ChapterStructurer(domain, enable_cache=True, book_title=book_title)
         
         # 토큰 통계 초기화 (book_id 설정 중요!)

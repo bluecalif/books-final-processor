@@ -2,7 +2,7 @@
 import logging
 import json
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from backend.api.models.book import Book, Chapter, BookStatus
 from backend.parsers.pdf_parser import PDFParser
@@ -28,6 +28,10 @@ class StructureService:
     def get_structure_candidates(self, book_id: int) -> Dict[str, Any]:
         """
         구조 후보 생성 (Footer 기반, LLM 보정 제외)
+        
+        **캐시 재사용 원칙**: 이미 구조 분석이 완료된 책의 경우, 
+        `data/output/structure/{hash_6}_{title}_structure.json` 파일을 재사용합니다.
+        PDF 해시 기반으로 구조 파일을 찾아 재사용하여 불필요한 구조 분석을 방지합니다.
 
         Args:
             book_id: 책 ID
@@ -64,12 +68,26 @@ class StructureService:
         parse_time = time.time() - parse_start
         logger.info(f"[INFO] PDF 파싱 완료: {parse_time:.3f}초")
 
-        # Footer 기반 구조 생성
-        logger.info("[INFO] Building Footer-based structure...")
-        structure_start = time.time()
-        footer_structure = self.structure_builder.build_structure(parsed_data)
-        structure_time = time.time() - structure_start
-        logger.info(f"[INFO] 구조 빌딩 완료: {structure_time:.3f}초")
+        # 구조 분석 캐시 확인 및 재사용
+        pdf_hash_6 = self._get_pdf_hash_6(book.source_file_path)
+        structure_file = self._find_structure_file_by_hash(pdf_hash_6, book.title)
+        
+        if structure_file and structure_file.exists():
+            # 구조 파일이 있으면 재사용
+            logger.info(f"[INFO] Using cached structure file: {structure_file.name}")
+            structure_start = time.time()
+            with open(structure_file, "r", encoding="utf-8") as f:
+                structure_json = json.load(f)
+            footer_structure = self._convert_json_to_structure_format(structure_json.get("structure", {}))
+            structure_time = time.time() - structure_start
+            logger.info(f"[INFO] 구조 파일 로드 완료: {structure_time:.3f}초 (캐시 재사용)")
+        else:
+            # 구조 파일이 없으면 새로 구조 분석 수행
+            logger.info(f"[INFO] Structure file not found, building new structure...")
+            structure_start = time.time()
+            footer_structure = self.structure_builder.build_structure(parsed_data)
+            structure_time = time.time() - structure_start
+            logger.info(f"[INFO] 구조 빌딩 완료: {structure_time:.3f}초")
 
         # 샘플 페이지 추출
         samples_start = time.time()
@@ -356,4 +374,145 @@ class StructureService:
         """
         chapters = heuristic_structure.get("main", {}).get("chapters", [])
         return [ch.get("title", "") for ch in chapters if ch.get("title")]
+
+    def _get_pdf_hash_6(self, pdf_path: str) -> str:
+        """
+        PDF 파일의 MD5 해시 6글자 계산
+
+        Args:
+            pdf_path: PDF 파일 경로
+
+        Returns:
+            MD5 해시 앞 6글자
+        """
+        import hashlib
+        pdf_file = Path(pdf_path)
+        if not pdf_file.exists():
+            logger.warning(f"[WARNING] PDF 파일 없음: {pdf_path}")
+            return ""
+        
+        try:
+            with open(pdf_file, "rb") as f:
+                hasher = hashlib.md5()
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hasher.update(chunk)
+                file_hash = hasher.hexdigest()
+                file_hash_6 = file_hash[:6]
+                logger.debug(f"[DEBUG] PDF 해시 계산 완료: {file_hash_6} (전체: {file_hash[:12]}...)")
+                return file_hash_6
+        except Exception as e:
+            logger.warning(f"[WARNING] PDF 해시 계산 실패: {e}, pdf_path={pdf_path}")
+            return ""
+
+    def _find_structure_file_by_hash(self, hash_6: str, book_title: Optional[str] = None) -> Optional[Path]:
+        """
+        PDF 해시 기반으로 구조 파일 찾기
+
+        Args:
+            hash_6: PDF 해시 6글자
+            book_title: 책 제목 (선택)
+
+        Returns:
+            구조 파일 경로 또는 None
+        """
+        if not hash_6:
+            return None
+        
+        structure_dir = settings.output_dir / "structure"
+        if not structure_dir.exists():
+            return None
+
+        # 1. 해시 + 책 제목으로 찾기 (정확한 매칭)
+        if book_title:
+            import re
+            safe_title = re.sub(r'[\\/:*?"<>|]', '_', book_title)
+            safe_title = safe_title.replace(' ', '_')[:10]
+            pattern = f"{hash_6}_{safe_title}_structure.json"
+            structure_file = structure_dir / pattern
+            if structure_file.exists():
+                logger.debug(f"[DEBUG] Found structure file by hash+title: {structure_file.name}")
+                return structure_file
+
+        # 2. 해시만으로 찾기 (와일드카드)
+        pattern = f"{hash_6}_*_structure.json"
+        matches = list(structure_dir.glob(pattern))
+        if matches:
+            logger.debug(f"[DEBUG] Found structure file by hash: {matches[0].name}")
+            return matches[0]
+
+        # 3. 해시만으로 찾기 (해시만 있는 파일)
+        pattern = f"{hash_6}_structure.json"
+        structure_file = structure_dir / pattern
+        if structure_file.exists():
+            logger.debug(f"[DEBUG] Found structure file by hash only: {structure_file.name}")
+            return structure_file
+
+        logger.debug(f"[DEBUG] Structure file not found for hash={hash_6}, title={book_title}")
+        return None
+
+    def _convert_json_to_structure_format(self, structure_json: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        JSON 파일의 구조 데이터를 StructureBuilder 출력 형식으로 변환
+        
+        **중요**: 구조 확정 API에서 `main_start_page`와 `main_end_page`가 필요하므로,
+        이 필드들을 루트 레벨에 포함하여 반환합니다.
+
+        Args:
+            structure_json: JSON 파일의 structure 필드 딕셔너리
+
+        Returns:
+            StructureBuilder 출력 형식 딕셔너리
+            {
+                "main_start_page": int,  # 구조 확정 API에서 필요
+                "main_end_page": int,    # 구조 확정 API에서 필요
+                "start": {"pages": [...], "page_count": N},
+                "main": {"pages": [...], "page_count": N, "chapters": [...]},
+                "end": {"pages": [...], "page_count": N}
+            }
+        """
+        main_start_page = structure_json.get("main_start_page")
+        main_end_page = structure_json.get("main_end_page")
+        chapters = structure_json.get("chapters", [])
+        start_pages = structure_json.get("start_pages", [])
+        end_pages = structure_json.get("end_pages", [])
+        notes_pages = structure_json.get("notes_pages", [])
+
+        # main_pages 생성 (main_start_page ~ main_end_page 범위)
+        main_pages = []
+        if main_start_page and main_end_page:
+            main_pages = list(range(main_start_page, main_end_page + 1))
+
+        # StructureBuilder 출력 형식으로 변환
+        # 구조 확정 API에서 main_start_page와 main_end_page가 필요하므로 루트 레벨에 포함
+        result = {
+            "main_start_page": main_start_page,  # 구조 확정 API에서 필요
+            "main_end_page": main_end_page,       # 구조 확정 API에서 필요
+            "start": {
+                "pages": start_pages,
+                "page_count": len(start_pages),
+            },
+            "main": {
+                "pages": main_pages,
+                "page_count": len(main_pages),
+                "chapters": [
+                    {
+                        "title": ch.get("title", ""),
+                        "start_page": ch.get("start_page"),
+                        "end_page": ch.get("end_page"),
+                        "order_index": ch.get("order_index", idx),
+                    }
+                    for idx, ch in enumerate(chapters)
+                ],
+            },
+            "end": {
+                "pages": end_pages,
+                "page_count": len(end_pages),
+            },
+        }
+
+        logger.debug(
+            f"[DEBUG] Converted structure format: main_start_page={main_start_page}, "
+            f"main_end_page={main_end_page}, main_pages={len(main_pages)}, chapters={len(chapters)}"
+        )
+        return result
 

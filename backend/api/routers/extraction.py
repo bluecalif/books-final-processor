@@ -1,11 +1,12 @@
 """엔티티 추출 관련 API 라우터"""
 import logging
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from backend.api.database import get_db
 from backend.api.services.extraction_service import ExtractionService
+from backend.api.services.book_report_service import BookReportService
 from backend.api.schemas.book import PageSummaryResponse, ChapterSummaryResponse
 from backend.api.models.book import Book, BookStatus, PageSummary, ChapterSummary, Chapter
 
@@ -89,6 +90,44 @@ def _extract_chapters_background(book_id: int):
                 db.commit()
         except Exception as update_error:
             logger.error(f"[ERROR] Failed to update book status: {update_error}")
+    finally:
+        db.close()
+
+
+def _generate_book_summary_background(book_id: int):
+    """
+    백그라운드에서 북 서머리 생성 실행
+    
+    Args:
+        book_id: 책 ID
+    """
+    logger.info(f"[INFO] Starting background book summary generation for book_id={book_id}")
+    
+    # 새로운 DB 세션 생성 (백그라운드 작업용)
+    db = next(get_db())
+    
+    try:
+        # 책 조회하여 제목 가져오기
+        book = db.query(Book).filter(Book.id == book_id).first()
+        if not book:
+            logger.error(f"[ERROR] Book {book_id} not found")
+            return
+        
+        book_title = book.title or f"book_{book_id}"
+        report_service = BookReportService(db, book_title=book_title)
+        report = report_service.generate_report(book_id)
+        
+        logger.info(
+            f"[INFO] Background book summary generation completed: book_id={book_id}"
+        )
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(
+            f"[ERROR] Background book summary generation failed: book_id={book_id}, "
+            f"error={type(e).__name__}: {str(e)}\n"
+            f"Traceback:\n{error_trace}"
+        )
     finally:
         db.close()
 
@@ -234,7 +273,7 @@ def start_page_extraction(
     book_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    limit_pages: Optional[int] = None,
+    limit_pages: Optional[int] = Query(None, description="페이지 제한 (테스트용, None이면 전체 처리)"),
 ):
     """
     페이지 엔티티 추출 시작 (백그라운드 작업)
@@ -309,6 +348,47 @@ def start_chapter_extraction(
     
     return {
         "message": "Chapter extraction started",
+        "book_id": book_id,
+        "status": "processing",
+    }
+
+
+@router.post("/{book_id}/extract/book_summary")
+def start_book_summary_generation(
+    book_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    북 서머리 생성 시작 (백그라운드 작업)
+    
+    Args:
+        book_id: 책 ID
+        background_tasks: FastAPI 백그라운드 작업
+        db: 데이터베이스 세션
+    
+    Returns:
+        작업 시작 메시지
+    """
+    # 책 존재 확인
+    book = db.query(Book).filter(Book.id == book_id).first()
+    if not book:
+        raise HTTPException(status_code=404, detail=f"Book {book_id} not found")
+    
+    # 챕터 구조화 완료 확인
+    if book.status != BookStatus.SUMMARIZED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Book {book_id} is not in summarized status. Current status: {book.status}. Please run chapter extraction first.",
+        )
+    
+    # 백그라운드 작업 추가
+    background_tasks.add_task(_generate_book_summary_background, book_id)
+    
+    logger.info(f"[INFO] Book summary generation task queued for book_id={book_id}")
+    
+    return {
+        "message": "Book summary generation started",
         "book_id": book_id,
         "status": "processing",
     }

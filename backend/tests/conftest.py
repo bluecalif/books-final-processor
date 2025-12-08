@@ -8,6 +8,14 @@ import socket
 from pathlib import Path
 import platform
 from datetime import datetime
+import sys
+import io
+
+# 한글 출력을 위한 인코딩 설정
+if sys.platform == 'win32':
+    # Windows 환경에서 UTF-8 인코딩 설정
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # 테스트 서버 설정
 TEST_SERVER_HOST = "127.0.0.1"
