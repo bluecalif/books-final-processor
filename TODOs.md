@@ -456,6 +456,14 @@
 
 **⚠️ 참고**: 7.2에서 테스트한 4권 (Book ID: 175, 176, 177, 184) + 새로 테스트한 1권을 제외한 나머지 챕터 6개 이상 도서를 일괄 처리
 
+**⚠️ 중요: 진행률 및 소요 시간 표시 필수**:
+- 모든 파이프라인 테스트와 7.5 스크립트에서 진행률, 소요 시간, 남은 시간 표시 필수
+- 진행률: `{current}/{total} ({progress_pct}%)`
+- 소요 시간: `Time: {elapsed_min:02d}:{elapsed_sec:02d}`
+- 평균 시간: `Avg: {avg_time:.1f}s/item`
+- 예상 남은 시간: `Est: {est_min:02d}:{est_sec:02d}`
+- 공통 유틸리티 함수 사용: `backend/tests/test_utils.py`의 `wait_for_extraction_with_progress()` 활용
+
 - [ ] **대량 처리 스크립트 작성** (`backend/scripts/process_all_books_6plus_chapters.py` 생성):
   - DB에서 챕터 6개 이상인 도서 조회
   - 각 도서별 처리 상태 확인

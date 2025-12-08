@@ -25,6 +25,7 @@ import hashlib
 from pathlib import Path
 from typing import Optional, Dict, Any
 from backend.config.settings import settings
+from backend.tests.test_utils import wait_for_extraction_with_progress
 
 pytestmark = pytest.mark.e2e
 
@@ -245,6 +246,15 @@ def test_e2e_new_book_full_pipeline(e2e_client: httpx.Client):
     # ===== 5. 페이지 엔티티 추출 =====
     print(f"\n[STEP 5] 페이지 엔티티 추출...")
     
+    # 예상 페이지 수 계산
+    structure_data = book_data.get("structure_data", {})
+    if structure_data:
+        main_start = structure_data.get("main_start_page", 0)
+        main_end = structure_data.get("main_end_page", 0)
+        expected_pages = main_end - main_start + 1 if main_start and main_end else book_data.get("page_count", 0)
+    else:
+        expected_pages = book_data.get("page_count", 0)
+    
     # 캐시 디렉토리 확인 (추출 전)
     summaries_cache_dir = settings.cache_dir / "summaries"
     page_cache_before = len(list(summaries_cache_dir.glob("page_*.json")))
@@ -253,9 +263,23 @@ def test_e2e_new_book_full_pipeline(e2e_client: httpx.Client):
     assert response.status_code == 200
     assert response.json()["status"] == "processing"
     
-    # 완료 대기
-    book_data = wait_for_status(
-        e2e_client, uploaded_book_id, "page_summarized", max_wait_time=1800
+    # 현재 페이지 개수를 가져오는 함수
+    def get_page_count(book_id: int) -> int:
+        pages_response = e2e_client.get(f"/api/books/{book_id}/pages")
+        if pages_response.status_code == 200:
+            return len(pages_response.json())
+        return 0
+    
+    # 완료 대기 (진행률 출력 포함)
+    book_data = wait_for_extraction_with_progress(
+        e2e_client=e2e_client,
+        book_id=uploaded_book_id,
+        target_status="page_summarized",
+        expected_count=expected_pages,
+        get_current_count_func=get_page_count,
+        extraction_type="pages",
+        max_wait_time=1800,
+        check_interval=10,
     )
     
     # 캐시 저장 확인
@@ -274,6 +298,9 @@ def test_e2e_new_book_full_pipeline(e2e_client: httpx.Client):
     # ===== 6. 챕터 구조화 =====
     print(f"\n[STEP 6] 챕터 구조화...")
     
+    # 예상 챕터 수
+    expected_chapters = len(structure_data.get("chapters", [])) if structure_data else chapter_count
+    
     # 캐시 디렉토리 확인 (추출 전)
     chapter_cache_before = len(list(summaries_cache_dir.glob("chapter_*.json")))
     
@@ -281,9 +308,23 @@ def test_e2e_new_book_full_pipeline(e2e_client: httpx.Client):
     assert response.status_code == 200
     assert response.json()["status"] == "processing"
     
-    # 완료 대기
-    book_data = wait_for_status(
-        e2e_client, uploaded_book_id, "summarized", max_wait_time=1800
+    # 현재 챕터 개수를 가져오는 함수
+    def get_chapter_count(book_id: int) -> int:
+        chapters_response = e2e_client.get(f"/api/books/{book_id}/chapters")
+        if chapters_response.status_code == 200:
+            return len(chapters_response.json())
+        return 0
+    
+    # 완료 대기 (진행률 출력 포함)
+    book_data = wait_for_extraction_with_progress(
+        e2e_client=e2e_client,
+        book_id=uploaded_book_id,
+        target_status="summarized",
+        expected_count=expected_chapters,
+        get_current_count_func=get_chapter_count,
+        extraction_type="chapters",
+        max_wait_time=1800,
+        check_interval=10,
     )
     
     # 캐시 저장 확인
