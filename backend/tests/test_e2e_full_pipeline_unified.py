@@ -611,29 +611,59 @@ def test_e2e_new_book_full_pipeline(e2e_client: httpx.Client):
     새 책 1권 전체 파이프라인 E2E 테스트
     
     **목적**: 새로 업로드한 책에 대해 전체 파이프라인 테스트
-    - Book ID 165 ("1등의 통찰", 7개 챕터) 사용
+    - 환경변수 TEST_BOOK_ID로 책 ID 지정 (기본값: 자동 선택)
     - 전체 플로우: 업로드 → 파싱 → 구조 분석 → 페이지 추출 → 챕터 구조화 → 북 서머리 생성
+    
+    **사용 방법**:
+    ```powershell
+    # 특정 책으로 테스트
+    $env:TEST_BOOK_ID = "177"; poetry run pytest backend/tests/test_e2e_full_pipeline_unified.py::test_e2e_new_book_full_pipeline -v -m e2e -s
+    ```
     """
-    # 테스트 대상: Book ID 165 (이미 사용된 4권 제외한 첫 번째)
-    book_id = 165
-    title = "1등의 통찰"
-    category = "경제/경영"
-    chapter_count = 7
+    import os
     
-    # PDF 파일 경로 확인
-    from backend.api.database import SessionLocal
-    from backend.api.models.book import Book
+    # 환경변수에서 book_id 가져오기
+    test_book_id = os.getenv("TEST_BOOK_ID")
     
-    db = SessionLocal()
-    try:
-        book = db.query(Book).filter(Book.id == book_id).first()
-        if not book:
-            pytest.skip(f"Book {book_id} not found in database")
-        pdf_path = Path(book.source_file_path)
+    if test_book_id:
+        # 환경변수로 지정된 경우
+        book_id = int(test_book_id)
+        from backend.api.database import SessionLocal
+        from backend.api.models.book import Book, Chapter
+        
+        db = SessionLocal()
+        try:
+            book = db.query(Book).filter(Book.id == book_id).first()
+            if not book:
+                pytest.skip(f"Book {book_id} not found in database")
+            title = book.title or f"book_{book_id}"
+            category = book.category or "미분류"
+            chapter_count = db.query(Chapter).filter(Chapter.book_id == book_id).count()
+            pdf_path = Path(book.source_file_path)
+            if not pdf_path.exists():
+                pytest.skip(f"PDF file not found: {pdf_path}")
+        finally:
+            db.close()
+    else:
+        # 자동 선택: 북서머리 미완료 책 중 첫 번째
+        from backend.scripts.select_test_samples import select_test_samples
+        
+        result = select_test_samples()
+        if not result["samples"]:
+            pytest.skip("No test samples available (all books have book summaries)")
+        
+        # 첫 번째 샘플 선택
+        sample = result["samples"][0]
+        book_id = sample["book_id"]
+        title = sample["title"]
+        category = sample["category"]
+        chapter_count = sample["chapter_count"]
+        pdf_path = Path(sample["source_file_path"])
+        
         if not pdf_path.exists():
             pytest.skip(f"PDF file not found: {pdf_path}")
-    finally:
-        db.close()
+        
+        print(f"[TEST] Auto-selected book: ID={book_id}, Title={title}, Category={category}, Chapters={chapter_count}")
     
     # 전체 파이프라인 처리
     process_book_full_pipeline(

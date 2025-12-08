@@ -458,4 +458,32 @@ Get-ChildItem "data\output\book_summaries" | Select-Object Name, LastWriteTime
 
 ---
 
+### ✅ 문제 8: 테스트 완료 후 프로세스 종료 문제 (미해결)
+
+**발생 시점**: 2025-12-08
+
+**증상**:
+- 테스트가 완료되었지만 터미널 출력이 멈추고 프로세스가 종료되지 않음
+- 서버 로그에는 모든 작업이 정상적으로 완료됨:
+  - 북서머리 생성 완료: `[INFO] Book report generated successfully for book_id=263`
+  - 백그라운드 작업 완료: `[INFO] Background book summary generation completed: book_id=263`
+  - 최종 API 호출 완료: `GET /api/books/263`, `GET /api/books/263/pages`, `GET /api/books/263/chapters`
+
+**원인 분석**:
+- 테스트 함수는 정상적으로 완료되었지만 프로세스가 종료되지 않음
+- 가능한 원인:
+  1. 서버 프로세스가 자동으로 종료되지 않음
+  2. 백그라운드 작업 스레드가 종료되지 않음
+  3. 테스트 픽스처의 cleanup 로직 문제
+
+**해결 방안** (다음 작업):
+1. `conftest.py`의 `test_server` 픽스처에서 서버 종료 로직 확인
+2. 백그라운드 작업 스레드 종료 확인
+3. 테스트 완료 후 명시적으로 프로세스 종료 로직 추가
+
+**임시 해결책**:
+- 테스트 완료 후 수동으로 프로세스 종료 (Ctrl+C 또는 taskkill)
+
+---
+
 **최종 업데이트**: 2025-12-08

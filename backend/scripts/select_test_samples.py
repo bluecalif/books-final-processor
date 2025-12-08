@@ -2,6 +2,7 @@
 E2E 테스트용 샘플 도서 선정 스크립트
 
 챕터 수 6개 이상인 도서 중 분야별로 파일명 가나다순 상위 1개씩 선정
+북서머리 미완료 책만 선택
 """
 import json
 import logging
@@ -60,9 +61,13 @@ def select_test_samples() -> dict:
         
         logger.info(f"[INFO] Books by category: {[(cat, len(books)) for cat, books in books_by_category.items()]}")
         
-        # 4. 각 분야에서 파일명 가나다순 상위 1개 선정
+        # 4. 각 분야에서 파일명 가나다순 상위 1개 선정 (북서머리 미완료 책만)
         selected_samples = []
         target_categories = ["역사/사회", "경제/경영", "인문/자기계발", "과학/기술"]
+        
+        # 북서머리 디렉토리 확인
+        from backend.config.settings import settings
+        book_summary_dir = settings.output_dir / "book_summaries"
         
         for category in target_categories:
             if category not in books_by_category:
@@ -77,7 +82,27 @@ def select_test_samples() -> dict:
                 key=lambda b: Path(b.source_file_path).stem if b.source_file_path else ""
             )
             
-            selected_book = books_sorted[0]
+            # 북서머리 미완료 책 찾기
+            selected_book = None
+            for book in books_sorted:
+                # 북서머리 파일 존재 여부 확인
+                if book.title:
+                    safe_title = "".join(
+                        c for c in book.title 
+                        if c.isalnum() or c in (' ', '-', '_')
+                    ).strip().replace(' ', '_')[:100]
+                    book_summary_files = list(book_summary_dir.glob(f"*{safe_title}*.json"))
+                    book_summary_files.extend(book_summary_dir.glob(f"*{book.id}*.json"))
+                    
+                    if not book_summary_files:
+                        # 북서머리 파일이 없으면 선택
+                        selected_book = book
+                        logger.info(f"[INFO] Selected book without book summary: book_id={book.id}, title={book.title}")
+                        break
+            
+            if not selected_book:
+                logger.warning(f"[WARNING] All books in category {category} have book summaries. Skipping.")
+                continue
             
             # 챕터 수 확인
             chapter_count = (
