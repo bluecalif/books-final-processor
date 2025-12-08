@@ -409,26 +409,22 @@
 
 **⚠️ 중요: 모든 E2E 테스트는 실제 서버 실행, Mock 사용 금지, 실제 데이터만 사용** (실제 PDF, 실제 Upstage API, 실제 OpenAI LLM, 실제 DB)
 
-- [x] **전체 플로우 E2E 테스트** (`backend/tests/test_e2e_full_pipeline.py` 생성 완료, 실제 서버 실행):
-  - 1. `POST /api/books/upload` → 책 생성 (`uploaded`)
-  - 2. 실제 Upstage API로 PDF 파싱 → `parsed` 상태 확인 → **캐시 저장 확인** (`data/cache/upstage/`)
-  - 3. `GET /api/books/{id}/structure/candidates` → 구조 후보 생성 → **캐시된 파싱 결과 재사용 확인**
-  - 4. `POST /api/books/{id}/structure/final` → 구조 확정 (`structured`) → **구조 파일 저장 확인** (`data/output/structure/`)
-  - 5. `POST /api/books/{id}/extract/pages` → 실제 LLM으로 페이지 엔티티 추출 (`page_summarized`) → **캐시 저장 확인** (`data/cache/summaries/`)
-  - 6. `POST /api/books/{id}/extract/chapters` → 실제 LLM으로 챕터 구조화 (`summarized`) → **캐시 저장 확인**
-  - 7. `BookReportService.generate_report()` → 실제 LLM으로 도서 서머리 생성 → **도서 서머리 파일 저장 확인** (`data/output/book_summaries/`)
-  - 8-9. 최종 결과 조회 검증 (`GET /api/books/{id}`, `/pages`, `/chapters`, 도서 서머리 파일 확인)
-  - 각 단계별 데이터 정합성 검증 (DB 레코드, 관계, 상태 변경 순서)
-  - **캐시 재사용 검증**: 동일 PDF/텍스트 재요청 시 캐시 히트 확인 (API 호출 없음)
-  - **테스트 대상**: 챕터 6개 이상 도서 (기존 `select_test_samples.py` 활용)
-  - **캐시 활용 확인**: Upstage 캐시 (`data/cache/upstage/`), 구조 파일 (`data/output/structure/`) 확인
+- [ ] **전체 플로우 E2E 테스트** (`backend/tests/test_e2e_full_pipeline.py` 수정 필요):
+  - **1단계: 구조 분석 완료된 4권 캐시 검증 테스트** (완료된 책 검증):
+    - 이미 구조 분석이 완료된 4권 (Book ID: 175, 176, 177, 184)에 대해 캐시 활용 검증
+    - 구조 데이터, 페이지 엔티티, 챕터 엔티티, 도서 서머리 상태 확인
+    - Upstage 캐시, 구조 파일, 요약 캐시 확인
+  - **2단계: 챕터 6개 이상 도서 리스트 생성 및 보고**:
+    - `select_test_samples.py` 실행하여 챕터 6개 이상 도서 리스트 생성
+    - 총 몇 권인지 사용자에게 보고
+  - **3단계: 새 책 1권 E2E 테스트** (전체 파이프라인):
+    - 리스트 중 이미 사용된 4권 제외한 맨 첫 번째 한 권 선택
+    - 전체 플로우: 업로드 → 파싱 → 구조 분석 → 페이지 추출 → 챕터 구조화 → 도서 서머리 생성
+    - 각 단계별 캐시 저장/재사용 검증
+  - **4단계: 나머지 챕터 6개 이상 도서는 7.5에서 일괄 처리** (7.2 완료 후 7.5로 이관)
 - [x] **캐시 활용 검증 테스트** (`test_e2e_cache_verification`): 모든 챕터 6개 이상 도서에 대해 Upstage 캐시 및 구조 파일 확인
 - [x] **API 계약 검증** (`backend/tests/test_api_contract.py` 생성 완료): 모든 API 엔드포인트 응답 스키마, Pydantic 스키마와 실제 응답 일치, Enum 값 정합성, 필드명/타입 일치
 - [x] **에러 플로우 E2E 테스트** (일부 완료): 파일 형식 에러 처리, 존재하지 않는 책 조회, 파싱 전 구조 분석 시도
-- [ ] **다양한 시나리오 E2E 테스트** (선택사항, 필요시 추가):
-  - 다양한 형식의 실제 PDF (단면/양면 스캔, 한국어/영어, 다양한 챕터 구조)
-  - 엣지 케이스 (작은 PDF, 큰 PDF 100페이지 초과, 구조 불명확한 책)
-  - 분야별 대표 도서 (역사/사회, 경제/경영, 인문/자기계발, 과학/기술)
 
 #### 7.3 에러 처리 강화
 - [ ] Upstage API 실패 처리 (네트워크 에러, Rate limit, `error_parsing` 상태 업데이트, 에러 로그 저장)
