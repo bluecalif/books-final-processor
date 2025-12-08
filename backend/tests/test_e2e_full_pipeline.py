@@ -488,3 +488,82 @@ def test_e2e_cache_verification(e2e_client: httpx.Client, test_samples_6plus: li
     
     print(f"[TEST] ✅ 캐시 활용 검증 완료")
 
+
+@pytest.mark.e2e
+def test_e2e_error_flow_invalid_file(e2e_client: httpx.Client):
+    """
+    에러 플로우 E2E 테스트: 잘못된 파일 형식 업로드
+    """
+    print(f"\n{'=' * 80}")
+    print(f"[TEST] 에러 플로우 테스트: 잘못된 파일 형식")
+    print(f"{'=' * 80}")
+    
+    # 텍스트 파일을 PDF로 업로드 시도
+    from pathlib import Path
+    test_file = Path(__file__).parent / "test_api_contract.py"  # Python 파일
+    
+    with open(test_file, "rb") as f:
+        files = {"file": ("test.txt", f, "text/plain")}
+        response = e2e_client.post("/api/books/upload", files=files)
+    
+    # 400 Bad Request 또는 422 Unprocessable Entity 예상
+    assert response.status_code in [400, 422], f"Expected 400/422, got {response.status_code}"
+    
+    data = response.json()
+    assert "detail" in data
+    
+    print(f"[TEST] ✅ 잘못된 파일 형식 에러 처리 확인: {response.status_code}")
+
+
+@pytest.mark.e2e
+def test_e2e_error_flow_nonexistent_book(e2e_client: httpx.Client):
+    """
+    에러 플로우 E2E 테스트: 존재하지 않는 책 조회
+    """
+    print(f"\n{'=' * 80}")
+    print(f"[TEST] 에러 플로우 테스트: 존재하지 않는 책")
+    print(f"{'=' * 80}")
+    
+    # 존재하지 않는 book_id로 조회
+    response = e2e_client.get("/api/books/999999")
+    assert response.status_code == 404
+    
+    data = response.json()
+    assert "detail" in data
+    
+    print(f"[TEST] ✅ 존재하지 않는 책 에러 처리 확인: 404")
+
+
+@pytest.mark.e2e
+def test_e2e_error_flow_structure_without_parsing(e2e_client: httpx.Client):
+    """
+    에러 플로우 E2E 테스트: 파싱 전 구조 분석 시도
+    """
+    print(f"\n{'=' * 80}")
+    print(f"[TEST] 에러 플로우 테스트: 파싱 전 구조 분석")
+    print(f"{'=' * 80}")
+    
+    # uploaded 상태인 책 찾기 (파싱 전)
+    list_response = e2e_client.get("/api/books")
+    assert list_response.status_code == 200
+    books_data = list_response.json()
+    
+    uploaded_book = None
+    for book in books_data.get("books", []):
+        if book.get("status") == "uploaded":
+            uploaded_book = book
+            break
+    
+    if not uploaded_book:
+        pytest.skip("No uploaded books available for testing")
+    
+    book_id = uploaded_book["id"]
+    
+    # 구조 후보 조회 시도 (파싱 전이면 실패해야 함)
+    response = e2e_client.get(f"/api/books/{book_id}/structure/candidates")
+    
+    # 404 또는 400 예상
+    assert response.status_code in [404, 400], f"Expected 404/400, got {response.status_code}"
+    
+    print(f"[TEST] ✅ 파싱 전 구조 분석 에러 처리 확인: {response.status_code}")
+
