@@ -492,6 +492,15 @@
   - ExtractionService.extract_chapters()에 try-except 추가
   - BookReportService.generate_report()에 try-except 추가
   - 에러 발생 시 BookStatus.ERROR_SUMMARIZING 상태로 업데이트
+  - 함수 레벨 try/except 블록으로 전체 함수 본문 감싸기
+  - 함수 본문 레벨 코드(8칸)를 12칸으로 들여쓰기 증가 (try 블록 내부)
+  - except 블록에서 상세한 에러 로깅 및 상태 업데이트
+  - **⚠️ 구현 과정에서 발생한 문제**:
+    - 초기 수동 편집 시 들여쓰기 문제 발생 (중첩 블록 처리 복잡)
+    - Git 원복 후 스크립트 기반 자동 처리로 변경
+    - 스크립트 실행 후 중복 코드 발생 (logger.info, return 문 중복)
+    - 중복 코드 제거 후 최종 완료
+    - **교훈**: 복잡한 들여쓰기 작업은 스크립트보다 수동 검토가 필요할 수 있음
 - [x] 재시도 로직 개선 (지수 백오프, 최대 재시도 횟수 제한) ✅ 완료
   - UpstageAPIClient: 이미 지수 백오프 구현됨 (2^attempt)
   - LLM Chains: 이미 지수 백오프 구현됨 (2^attempt), max_retries=3
