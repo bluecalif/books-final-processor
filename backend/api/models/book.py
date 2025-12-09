@@ -29,7 +29,7 @@ class Book(Base):
     category = Column(String, nullable=True)  # 분야 (예: 역사/사회, 경제/경영 등)
     source_file_path = Column(String, nullable=False)
     page_count = Column(Integer, nullable=True)
-    status = Column(SQLEnum(BookStatus), default=BookStatus.UPLOADED, nullable=False)
+    status = Column(SQLEnum(BookStatus), default=BookStatus.UPLOADED, nullable=False, index=True)  # 인덱스 추가 (get_books 필터 최적화)
     structure_data = Column(JSON, nullable=True)  # 최종 확정된 구조
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

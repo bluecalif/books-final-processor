@@ -37,6 +37,10 @@ class ParsingService:
 
         Returns:
             업데이트된 Book 객체
+        
+        Raises:
+            ValueError: 책이 없거나 상태가 잘못된 경우
+            Exception: PDF 파싱 실패 시 (error_parsing 상태로 저장됨)
         """
         logger.info("=" * 80)
         logger.info("[FUNCTION] ParsingService.parse_book 호출됨")
@@ -60,11 +64,25 @@ class ParsingService:
             logger.info("=" * 80)
             raise ValueError(f"Book {book_id} is not in uploaded status. Current status: {book.status}")
 
-        # PDF 파싱 (캐시 사용)
-        logger.info("[CALL] self.pdf_parser.parse_pdf() 호출 시작")
-        logger.info(f"[PARAM] file_path={book.source_file_path}")
-        parsed_data = self.pdf_parser.parse_pdf(book.source_file_path, use_cache=True)
-        logger.info(f"[RETURN] parse_pdf() 반환값: pages 개수={len(parsed_data.get('pages', []))}, total_pages={parsed_data.get('total_pages', 0)}")
+        # PDF 파싱 (캐시 사용, 에러 처리)
+        try:
+            logger.info("[CALL] self.pdf_parser.parse_pdf() 호출 시작")
+            logger.info(f"[PARAM] file_path={book.source_file_path}")
+            parsed_data = self.pdf_parser.parse_pdf(book.source_file_path, use_cache=True)
+            logger.info(f"[RETURN] parse_pdf() 반환값: pages 개수={len(parsed_data.get('pages', []))}, total_pages={parsed_data.get('total_pages', 0)}")
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(
+                f"[ERROR] PDF parsing failed for book_id={book_id}, "
+                f"error={type(e).__name__}: {str(e)}\n"
+                f"Traceback:\n{error_trace}"
+            )
+            # 에러 상태로 업데이트
+            book.status = BookStatus.ERROR_PARSING
+            self.db.commit()
+            logger.error(f"[ERROR] Book {book_id} status updated to ERROR_PARSING")
+            raise
 
         # Pages 테이블에 저장
         logger.info("[CALL] Pages 테이블에 저장 시작")

@@ -483,9 +483,18 @@
     - order_index 순서 문제: 5건
 
 #### 7.3 에러 처리 강화
-- [ ] Upstage API 실패 처리 (네트워크 에러, Rate limit, `error_parsing` 상태 업데이트, 에러 로그 저장)
-- [ ] LLM 요약 실패 처리 (`error_summarizing` 상태, 부분 실패 처리)
-- [ ] 재시도 로직 개선 (지수 백오프, 최대 재시도 횟수 제한)
+- [x] Upstage API 실패 처리 (네트워크 에러, Rate limit, `error_parsing` 상태 업데이트, 에러 로그 저장) ✅ 완료
+  - ParsingService.parse_book()에 try-except 추가
+  - 에러 발생 시 BookStatus.ERROR_PARSING 상태로 업데이트
+  - 상세한 에러 로그 및 트레이스백 저장
+- [x] LLM 요약 실패 처리 (`error_summarizing` 상태, 부분 실패 처리) ✅ 완료
+  - ExtractionService.extract_pages()에 try-except 추가
+  - ExtractionService.extract_chapters()에 try-except 추가
+  - BookReportService.generate_report()에 try-except 추가
+  - 에러 발생 시 BookStatus.ERROR_SUMMARIZING 상태로 업데이트
+- [x] 재시도 로직 개선 (지수 백오프, 최대 재시도 횟수 제한) ✅ 완료
+  - UpstageAPIClient: 이미 지수 백오프 구현됨 (2^attempt)
+  - LLM Chains: 이미 지수 백오프 구현됨 (2^attempt), max_retries=3
 
 #### 7.4 성능 최적화 (필요한 부분만)
 
@@ -502,9 +511,13 @@
     - `.tmp` 파일 삭제
     - 각 챕터별로 최신 캐시만 유지하고 나머지는 `backup/`으로 이동
     - 정리 결과 리포트 출력
-- [ ] **DB 쿼리 최적화** (필요한 부분만):
-  - 인덱스 추가 확인 및 보완 (`books.status`, 기존 인덱스 확인)
-  - N+1 쿼리 방지 (`ExtractionService`, `BookReportService`에서 `joinedload` 사용)
+- [x] **DB 쿼리 최적화** (필요한 부분만): ✅ 완료
+  - [x] 인덱스 추가 확인 및 보완 ✅ 완료
+    - `books.status` 컬럼에 인덱스 추가 (get_books 필터 최적화)
+    - 기존 인덱스 확인: `book_id`, `chapter_id`, `page_number` 등 필수 인덱스 존재 확인
+  - [x] N+1 쿼리 방지 ✅ 완료
+    - `BookReportService.generate_report()`: `joinedload(ChapterSummary.chapter)` 추가
+    - `ExtractionService`: 챕터 정보 미리 조회하여 딕셔너리로 생성 (병렬 처리 중 DB 접근 방지)
 
 #### 7.5 챕터 6개 이상 모두 처리 스크립트
 

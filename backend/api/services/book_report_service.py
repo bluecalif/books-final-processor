@@ -41,13 +41,18 @@ class BookReportService:
         
         Returns:
             보고서 데이터 (Dict)
+        
+        Raises:
+            ValueError: 책이 없거나 챕터 요약이 없는 경우
+            Exception: 북 서머리 생성 실패 시
         """
         logger.info(f"[INFO] Generating book report for book_id={book_id}")
         
-        # 1. 책 조회
-        book = self.db.query(Book).filter(Book.id == book_id).first()
-        if not book:
-            raise ValueError(f"Book {book_id} not found")
+        try:
+            # 1. 책 조회
+            book = self.db.query(Book).filter(Book.id == book_id).first()
+            if not book:
+                raise ValueError(f"Book {book_id} not found")
         
         # 책 제목 업데이트 (캐시 폴더 분리용)
         if not self.book_title:
@@ -57,11 +62,13 @@ class BookReportService:
             cache_manager = SummaryCacheManager(book_title=self.book_title)
             self.book_summary_chain.cache_manager = cache_manager
         
-        # 2. 챕터별 요약 조회 (order_index 순서대로)
+        # 2. 챕터별 요약 조회 (order_index 순서대로, N+1 쿼리 방지)
+        from sqlalchemy.orm import joinedload
         chapter_summaries = (
             self.db.query(ChapterSummary)
             .filter(ChapterSummary.book_id == book_id)
             .join(Chapter, ChapterSummary.chapter_id == Chapter.id)
+            .options(joinedload(ChapterSummary.chapter))  # N+1 쿼리 방지
             .order_by(Chapter.order_index)
             .all()
         )
@@ -351,6 +358,24 @@ class BookReportService:
         
         logger.info(f"[INFO] Book report generated successfully for book_id={book_id}")
         return report
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(
+                f"[ERROR] Book report generation failed for book_id={book_id}, "
+                f"error={type(e).__name__}: {str(e)}\n"
+                f"Traceback:\n{error_trace}"
+            )
+            # 에러 상태로 업데이트 (선택적)
+            try:
+                book = self.db.query(Book).filter(Book.id == book_id).first()
+                if book:
+                    # 북 서머리 생성 실패는 별도 상태가 없으므로 FAILED 상태 사용
+                    # 또는 상태 변경 없이 로그만 남김 (현재는 상태 변경 없음)
+                    logger.warning(f"[WARNING] Book {book_id} report generation failed, status unchanged")
+            except Exception as update_error:
+                logger.error(f"[ERROR] Failed to update error status: {update_error}")
+            raise
     
     def _save_report_to_file(self, book: Book, report: Dict[str, Any]) -> None:
         """보고서를 로컬 파일로 저장"""

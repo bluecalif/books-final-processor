@@ -62,10 +62,11 @@ class ExtractionService:
         """
         logger.info(f"[INFO] Starting page extraction for book_id={book_id}, limit_pages={limit_pages}")
 
-        # 1. 책 조회
-        book = self.db.query(Book).filter(Book.id == book_id).first()
-        if not book:
-            raise ValueError(f"Book {book_id} not found")
+        try:
+            # 1. 책 조회
+            book = self.db.query(Book).filter(Book.id == book_id).first()
+            if not book:
+                raise ValueError(f"Book {book_id} not found")
 
         # 2. 도메인 확인
         if not book.category:
@@ -465,6 +466,24 @@ class ExtractionService:
             )
         
         return book
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(
+                f"[ERROR] Page extraction failed for book_id={book_id}, "
+                f"error={type(e).__name__}: {str(e)}\n"
+                f"Traceback:\n{error_trace}"
+            )
+            # 에러 상태로 업데이트
+            try:
+                book = self.db.query(Book).filter(Book.id == book_id).first()
+                if book:
+                    book.status = BookStatus.ERROR_SUMMARIZING
+                    self.db.commit()
+                    logger.error(f"[ERROR] Book {book_id} status updated to ERROR_SUMMARIZING")
+            except Exception as update_error:
+                logger.error(f"[ERROR] Failed to update error status: {update_error}")
+            raise
 
     def extract_chapters(self, book_id: int) -> Book:
         """
@@ -475,13 +494,18 @@ class ExtractionService:
 
         Returns:
             업데이트된 Book 객체
+        
+        Raises:
+            ValueError: 책이 없거나 상태가 잘못된 경우
+            Exception: 챕터 구조화 실패 시 (error_summarizing 상태로 저장됨)
         """
         logger.info(f"[INFO] Starting chapter structuring for book_id={book_id}")
 
-        # 1. 책 조회
-        book = self.db.query(Book).filter(Book.id == book_id).first()
-        if not book:
-            raise ValueError(f"Book {book_id} not found")
+        try:
+            # 1. 책 조회
+            book = self.db.query(Book).filter(Book.id == book_id).first()
+            if not book:
+                raise ValueError(f"Book {book_id} not found")
 
         # 2. 챕터 개수 확인 (1-2개인 책 제외)
         chapters = (
@@ -772,6 +796,24 @@ class ExtractionService:
             )
         
         return book
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(
+                f"[ERROR] Chapter structuring failed for book_id={book_id}, "
+                f"error={type(e).__name__}: {str(e)}\n"
+                f"Traceback:\n{error_trace}"
+            )
+            # 에러 상태로 업데이트
+            try:
+                book = self.db.query(Book).filter(Book.id == book_id).first()
+                if book:
+                    book.status = BookStatus.ERROR_SUMMARIZING
+                    self.db.commit()
+                    logger.error(f"[ERROR] Book {book_id} status updated to ERROR_SUMMARIZING")
+            except Exception as update_error:
+                logger.error(f"[ERROR] Failed to update error status: {update_error}")
+            raise
 
     def _get_chapter_info(self, book: Book, page_number: int) -> Dict[str, Any]:
         """
