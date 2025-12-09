@@ -401,10 +401,42 @@ def process_book_full_pipeline(
         if book_title:
             book_summary_files.extend(book_summary_dir.glob(f"*{book_title.replace(' ', '_')}*.json"))
         
-        # 파일이 생성되었으면 완료
+        # 파일이 생성되었으면 서버 로그에서 완료 메시지 확인
         if book_summary_files:
             print(f"[CACHE] [OK] 북 서머리 파일 저장 확인: {book_summary_files[0].name}", flush=True)
-            break
+            
+            # 서버 로그에서 백그라운드 작업 완료 메시지 확인
+            if log_file_path:
+                try:
+                    with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        # 마지막 10KB만 읽기 (성능 최적화)
+                        file_size = log_file_path.stat().st_size
+                        read_size = min(10000, file_size)
+                        if file_size > read_size:
+                            f.seek(file_size - read_size)
+                            f.readline()  # 첫 줄 버림
+                        log_content = f.read()
+                        
+                        # 백그라운드 작업 완료 메시지 확인
+                        if f"Background book summary generation completed: book_id={book_id}" in log_content:
+                            print(f"[TEST] [OK] 백그라운드 작업 완료 메시지 확인됨", flush=True)
+                            # 추가 대기 (백그라운드 작업 완전 종료 대기)
+                            time.sleep(3)
+                            break
+                        else:
+                            # 파일은 생성되었지만 완료 메시지가 아직 없음 (1초 더 대기)
+                            time.sleep(1)
+                            continue
+                except Exception as e:
+                    # 로그 파싱 실패 시에도 파일이 생성되었으면 완료로 간주
+                    print(f"[WARNING] 로그 파싱 실패, 파일 생성 확인으로 완료 처리: {e}", flush=True)
+                    time.sleep(3)  # 안전을 위해 추가 대기
+                    break
+            else:
+                # 로그 파일이 없으면 파일 생성 확인으로 완료 처리
+                print(f"[WARNING] 서버 로그 파일을 찾을 수 없음, 파일 생성 확인으로 완료 처리", flush=True)
+                time.sleep(3)  # 안전을 위해 추가 대기
+                break
         
         # 진행률 출력 (3초마다 또는 단계 변화 시)
         should_print = False

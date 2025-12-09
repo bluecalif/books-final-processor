@@ -541,11 +541,15 @@ git commit -m "docs: API 문서 업데이트"
 
 ### 5.5 Git 명령어 (PowerShell 환경)
 
+**⚠️ Git status 멈춤 문제 대안**:
+- `git status` 명령어가 터미널에서 멈출 경우, 대신 `git status --short` 사용
+- 간략한 출력으로 빠르게 상태 확인 가능
+
 ```powershell
 # 상태 확인
 git status
 
-# 변경사항 확인 (간략)
+# 변경사항 확인 (간략) - 멈춤 문제 시 대안
 git status --short
 
 # 변경사항 확인 (상세)

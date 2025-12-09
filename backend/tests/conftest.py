@@ -290,6 +290,12 @@ def test_server():
     
     # 서버 종료 (강제 종료 포함)
     print("[TEST_SERVER] 서버 종료 시작...")
+    
+    # 백그라운드 작업 완료 대기 (5초)
+    # FastAPI BackgroundTasks가 완료될 시간 제공
+    print("[TEST_SERVER] 백그라운드 작업 완료 대기 중... (5초)")
+    time.sleep(5)
+    
     try:
         force_kill_server_process(server_process, is_windows)
         
