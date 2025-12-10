@@ -669,16 +669,18 @@
   - ✅ 처리 가능한 책 목록 테이블 포함
   - **용도**: 추가 작업 시 기준 문서로 사용
 
-- [ ] **API 문서 작성** (`docs/API.md` 생성 또는 README.md에 통합):
-  - FastAPI 자동 생성 문서 링크 (`/docs`, `/openapi.json`)
-  - 주요 API 엔드포인트 설명
-  - 요청/응답 예시
-  - 에러 코드 및 처리 방법
-- [ ] **README.md 업데이트**:
-  - 프로젝트 완료 상태 업데이트
-  - Phase 7 완료 내용 반영
-  - 챕터 6개 이상 도서 처리 방법 안내
-  - 전체 파이프라인 실행 방법
+- [x] **API 문서 작성** (`docs/API.md` 생성):
+  - ✅ FastAPI 자동 생성 문서 링크 (`/docs`, `/openapi.json`)
+  - ✅ 주요 API 엔드포인트 설명
+  - ✅ 요청/응답 예시
+  - ✅ 에러 코드 및 처리 방법
+  - ✅ 상태 전이 설명
+  - ✅ 예시 플로우 포함
+- [x] **README.md 업데이트**:
+  - ✅ 프로젝트 완료 상태 업데이트
+  - ✅ Phase 7 완료 내용 반영
+  - ✅ 프로젝트 완료 현황 테이블 추가
+  - ✅ 도서 처리 현황 추가
 - [ ] **코드 주석 보완**:
   - `backend/api/services/extraction_service.py`: 주요 메서드 docstring 보완
   - `backend/api/services/book_report_service.py`: 주요 메서드 docstring 보완
