@@ -75,32 +75,35 @@ class PageExtractionChain:
         _add_additional_properties_false(json_schema)
 
         # 재시도 로직 (지수 백오프)
+        # OpenAI API 호출 실패 시 자동 재시도 (타임아웃, Rate limit, 일시적 오류 등)
         last_error = None
         for attempt in range(self.max_retries):
             try:
                 # Structured Output으로 LLM 호출
+                # strict=True: JSON Schema를 엄격히 준수해야 함
                 response = self.client.beta.chat.completions.create(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": prompt["system"]},
                         {"role": "user", "content": prompt["user"]},
                     ],
-                    temperature=self.temperature,
+                    temperature=self.temperature,  # 0.3 (낮은 값으로 일관성 유지)
                     response_format={
                         "type": "json_schema",
                         "json_schema": {
                             "name": f"{self.domain}_page_extraction",
                             "schema": json_schema,
-                            "strict": True,
+                            "strict": True,  # 추가 필드 허용 안 함
                         },
                     },
                 )
 
                 # 응답 파싱 및 검증
+                # Pydantic 스키마로 자동 검증 (타입, 필수 필드 등)
                 response_text = response.choices[0].message.content
                 result = self.schema_class.model_validate_json(response_text)
 
-                # 실제 토큰 사용량 추출
+                # 실제 토큰 사용량 추출 (비용 계산용)
                 usage = None
                 if hasattr(response, "usage") and response.usage:
                     usage = {
@@ -118,24 +121,27 @@ class PageExtractionChain:
                 logger.info(f"[INFO] Page entity extraction completed")
                 return result, usage
 
+            # 모든 예외 처리 (타임아웃, Rate limit, JSON 파싱 오류 등)
             except Exception as e:
                 last_error = e
                 error_type = type(e).__name__
 
+                # 마지막 시도가 아니면 재시도
                 if attempt < self.max_retries - 1:
-                    wait_time = 2**attempt  # 지수 백오프: 1, 2, 4초
+                    wait_time = 2**attempt  # 지수 백오프: 1초, 2초, 4초
                     logger.warning(
                         f"[WARNING] Page extraction attempt {attempt + 1}/{self.max_retries} failed: "
                         f"{error_type}: {str(e)[:100]}, retrying in {wait_time}s..."
                     )
                     time.sleep(wait_time)
                 else:
+                    # 모든 재시도 실패 시 에러 로그 및 예외 발생
                     logger.error(
                         f"[ERROR] Page extraction failed after {self.max_retries} attempts: "
                         f"{error_type}: {str(e)[:200]}"
                     )
 
-        # 모든 재시도 실패
+        # 모든 재시도 실패 시 마지막 오류를 다시 발생시킴
         raise last_error
 
     def _build_prompt(
@@ -335,32 +341,35 @@ class ChapterStructuringChain:
         _add_additional_properties_false(json_schema)
 
         # 재시도 로직 (지수 백오프)
+        # OpenAI API 호출 실패 시 자동 재시도 (타임아웃, Rate limit, 일시적 오류 등)
         last_error = None
         for attempt in range(self.max_retries):
             try:
                 # Structured Output으로 LLM 호출
+                # strict=True: JSON Schema를 엄격히 준수해야 함
                 response = self.client.beta.chat.completions.create(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": prompt["system"]},
                         {"role": "user", "content": prompt["user"]},
                     ],
-                    temperature=self.temperature,
+                    temperature=self.temperature,  # 0.3 (낮은 값으로 일관성 유지)
                     response_format={
                         "type": "json_schema",
                         "json_schema": {
                             "name": f"{self.domain}_chapter_structuring",
                             "schema": json_schema,
-                            "strict": True,
+                            "strict": True,  # 추가 필드 허용 안 함
                         },
                     },
                 )
 
                 # 응답 파싱 및 검증
+                # Pydantic 스키마로 자동 검증 (타입, 필수 필드 등)
                 response_text = response.choices[0].message.content
                 result = self.schema_class.model_validate_json(response_text)
 
-                # 실제 토큰 사용량 추출
+                # 실제 토큰 사용량 추출 (비용 계산용)
                 usage = None
                 if hasattr(response, "usage") and response.usage:
                     usage = {
@@ -378,24 +387,27 @@ class ChapterStructuringChain:
                 logger.info(f"[INFO] Chapter structuring completed")
                 return result, usage
 
+            # 모든 예외 처리 (타임아웃, Rate limit, JSON 파싱 오류 등)
             except Exception as e:
                 last_error = e
                 error_type = type(e).__name__
 
+                # 마지막 시도가 아니면 재시도
                 if attempt < self.max_retries - 1:
-                    wait_time = 2**attempt  # 지수 백오프: 1, 2, 4초
+                    wait_time = 2**attempt  # 지수 백오프: 1초, 2초, 4초
                     logger.warning(
                         f"[WARNING] Chapter structuring attempt {attempt + 1}/{self.max_retries} failed: "
                         f"{error_type}: {str(e)[:100]}, retrying in {wait_time}s..."
                     )
                     time.sleep(wait_time)
                 else:
+                    # 모든 재시도 실패 시 에러 로그 및 예외 발생
                     logger.error(
                         f"[ERROR] Chapter structuring failed after {self.max_retries} attempts: "
                         f"{error_type}: {str(e)[:200]}"
                     )
 
-        # 모든 재시도 실패
+        # 모든 재시도 실패 시 마지막 오류를 다시 발생시킴
         raise last_error
 
     def _build_prompt(

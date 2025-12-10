@@ -36,11 +36,34 @@ class BookReportService:
         """
         책 전체 보고서 생성 (Phase 1: 필수 항목)
         
+        챕터별 요약을 집계하여 책 전체 보고서를 생성하고 JSON 파일로 저장합니다.
+        LLM을 사용하여 책 전체 요약 및 엔티티 집계를 수행합니다.
+        
+        **처리 플로우**:
+        1. 책 및 챕터별 요약 조회
+        2. 책 전체 요약 생성 (LLM)
+        3. 엔티티 집계 (insights, events, examples, persons, concepts)
+        4. 도메인별 엔티티 집계 (Phase 2)
+        5. JSON 파일 저장 (`data/output/book_summaries/{book_title}_report.json`)
+        
+        **에러 처리**:
+        - LLM 호출 실패 시 예외 발생
+        - 파일 저장 실패 시 예외 발생
+        - 부분 실패는 허용하지 않음 (전체 실패로 처리)
+        
+        **캐시 활용**:
+        - BookSummaryChain과 EntitySynthesisChain이 자동으로 캐시 확인 및 저장
+        - 같은 입력은 재사용하여 LLM 호출 없음
+        
         Args:
             book_id: 책 ID
         
         Returns:
             보고서 데이터 (Dict)
+            
+        Raises:
+            ValueError: 책을 찾을 수 없거나 챕터 요약이 없는 경우
+            Exception: LLM 호출 또는 파일 저장 실패
         """
         logger.info(f"[INFO] Generating book report for book_id={book_id}")
 

@@ -399,6 +399,8 @@ class UpstageAPIClient:
             "model": "document-parse",
         }
 
+        # 재시도 로직 (지수 백오프)
+        # Rate limit(429) 및 네트워크 오류 시 자동 재시도
         for attempt in range(retries):
             attempt_start = time.time()
             try:
@@ -407,10 +409,12 @@ class UpstageAPIClient:
                 )
                 with open(pdf_path, "rb") as f:
                     files = {"document": f}
+                    # 타임아웃: 120초 (대형 PDF 처리 시간 고려)
                     response = requests.post(
                         self.url, headers=headers, files=files, data=data, timeout=120
                     )
 
+                # 성공 응답 처리
                 if response.status_code == 200:
                     result = response.json()
                     element_count = len(result.get("elements", []))
@@ -423,9 +427,10 @@ class UpstageAPIClient:
                         f"{element_count} elements, {pages_count} pages"
                     )
                     return result
-                elif response.status_code == 429:  # Rate limit
+                # Rate limit (429) 처리: 지수 백오프로 재시도
+                elif response.status_code == 429:
                     if attempt < retries - 1:
-                        wait_time = 2**attempt  # 지수 백오프
+                        wait_time = 2**attempt  # 지수 백오프: 1초, 2초, 4초
                         logger.warning(
                             f"[UpstageAPIClient] [API_RATE_LIMIT] Rate limit 발생, "
                             f"{wait_time}초 대기 후 재시도 ({attempt + 1}/{retries}): {pdf_path}"
@@ -433,11 +438,14 @@ class UpstageAPIClient:
                         time.sleep(wait_time)
                         continue
                     else:
+                        # 모든 재시도 실패 시 예외 발생
                         logger.error(
                             f"[UpstageAPIClient] [API_RATE_LIMIT_FAILED] Rate limit 초과, "
                             f"모든 재시도 실패: {pdf_path}"
                         )
                         raise Exception(f"Rate limit exceeded: {response.text}")
+                
+                # 기타 HTTP 오류 (400, 500 등)
                 else:
                     logger.error(
                         f"[UpstageAPIClient] [API_ERROR] API 호출 실패: "
@@ -448,10 +456,11 @@ class UpstageAPIClient:
                         f"API call failed: {response.status_code} - {response.text}"
                     )
 
+            # 네트워크 오류 처리 (타임아웃, 연결 실패 등)
             except requests.exceptions.RequestException as e:
                 attempt_time = time.time() - attempt_start
                 if attempt < retries - 1:
-                    wait_time = 2**attempt  # 지수 백오프
+                    wait_time = 2**attempt  # 지수 백오프: 1초, 2초, 4초
                     logger.warning(
                         f"[UpstageAPIClient] [API_RETRY] 요청 실패, {wait_time}초 대기 후 재시도 "
                         f"({attempt + 1}/{retries}): {e}, 소요 시간: {attempt_time:.3f}초"
@@ -459,6 +468,7 @@ class UpstageAPIClient:
                     time.sleep(wait_time)
                     continue
                 else:
+                    # 모든 재시도 실패 시 예외 발생
                     total_time = time.time() - api_start
                     logger.error(
                         f"[UpstageAPIClient] [API_FAILED] 모든 재시도 실패: "

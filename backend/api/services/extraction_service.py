@@ -51,7 +51,29 @@ class ExtractionService:
 
     def extract_pages(self, book_id: int, limit_pages: Optional[int] = None) -> Book:
         """
-        페이지 엔티티 추출
+        페이지 엔티티 추출 (병렬 처리)
+
+        본문 페이지에 대해 OpenAI LLM을 사용하여 구조화된 엔티티를 추출합니다.
+        ThreadPoolExecutor를 사용하여 병렬 처리하며, 캐시를 활용하여 비용을 절감합니다.
+
+        **처리 플로우**:
+        1. 책 및 구조 데이터 조회 및 검증
+        2. PDF 파싱 (캐시 활용)
+        3. 구조 데이터 형식 확인 (형식 1 또는 형식 2 지원)
+        4. 본문 페이지와 파싱된 페이지 매칭 검증
+        5. 병렬 처리로 페이지 엔티티 추출 (ThreadPoolExecutor, workers=3)
+        6. 10페이지마다 DB 커밋 (진행 상황 보존)
+        7. Book 상태 업데이트 (page_summarized)
+
+        **에러 처리**:
+        - 개별 페이지 추출 실패 시 로그 기록 후 계속 진행 (부분 실패 허용)
+        - 구조 데이터 형식 불일치 시 ValueError 발생
+        - PDF 파일 없음 시 FileNotFoundError 발생
+        - 전체 실패 시 Book 상태를 error_summarizing으로 변경
+
+        **캐시 활용**:
+        - PageExtractor가 자동으로 캐시 확인 및 저장
+        - 같은 텍스트는 재사용하여 LLM 호출 없음
 
         Args:
             book_id: 책 ID
@@ -59,6 +81,10 @@ class ExtractionService:
 
         Returns:
             업데이트된 Book 객체
+
+        Raises:
+            ValueError: 책을 찾을 수 없거나 구조 데이터가 없는 경우
+            FileNotFoundError: PDF 파일이 없는 경우
         """
         logger.info(f"[INFO] Starting page extraction for book_id={book_id}, limit_pages={limit_pages}")
 
@@ -486,11 +512,36 @@ class ExtractionService:
         """
         챕터 구조화 (병렬 처리)
 
+        페이지 엔티티를 집계하여 챕터 수준의 구조화된 데이터를 생성합니다.
+        ThreadPoolExecutor를 사용하여 병렬 처리하며, 각 챕터마다 DB 커밋합니다.
+
+        **처리 플로우**:
+        1. 책 및 도메인 확인
+        2. 챕터 리스트 조회 (1-2개인 책은 자동 스킵)
+        3. 병렬 처리로 챕터 구조화 (ThreadPoolExecutor, workers=3)
+           - 각 챕터의 페이지 엔티티 집계 (DB에서 조회)
+           - 페이지 엔티티 압축 (상위 N개만 추려서 LLM에 전달)
+           - LLM 호출로 챕터 구조화
+        4. 각 챕터마다 DB 커밋 (진행 상황 보존)
+        5. Book 상태 업데이트 (summarized)
+
+        **에러 처리**:
+        - 개별 챕터 구조화 실패 시 로그 기록 후 계속 진행
+        - 페이지 엔티티가 없는 챕터는 스킵
+        - 전체 실패 시 Book 상태를 error_summarizing으로 변경
+
+        **캐시 활용**:
+        - ChapterStructurer가 자동으로 캐시 확인 및 저장
+        - 같은 페이지 엔티티 집합은 재사용하여 LLM 호출 없음
+
         Args:
             book_id: 책 ID
 
         Returns:
             업데이트된 Book 객체
+
+        Raises:
+            ValueError: 책을 찾을 수 없거나 페이지 추출이 완료되지 않은 경우
         """
         logger.info(f"[INFO] Starting chapter structuring for book_id={book_id}")
 
