@@ -107,6 +107,14 @@
 - `data/output/text/` 파일은 **API 엔드포인트** `GET /api/books/{id}/text` **용도로만 제공**
 - 프론트엔드가 없으므로 실제 사용 빈도는 낮음
 
+**⚠️ 구조 파일명 생성 특별 규칙**:
+- 일반적으로 구조 파일명은 `{hash_6}_{책제목10글자}_structure.json` 형식으로 생성됨
+- **예외**: "10년후이곳은제2의강남"과 "10년후이곳은제2의판교"처럼 동일한 10글자로 시작하지만 다른 책인 경우
+  - 해시가 다르므로 파일명 충돌 없음
+  - 구분을 위해 "강남" 또는 "판교"가 포함된 경우 전체 제목을 사용
+  - 파일명: `{hash_6}_{전체제목}_structure.json` (예: `a1fdb6_10년후이곳은제2의강남_structure.json`)
+- 구현 위치: `backend/api/services/structure_service.py`의 `_save_structure_to_json()` 메서드
+
 ### Phase 4: 대량 도서 처리 프레임 단계 (100% 완료)
 
 **완료된 주요 작업**:
@@ -412,6 +420,13 @@
 **⚠️ 구조 분석 캐시 재사용 원칙**:
 - 모든 책은 구조 분석까지는 기존 캐시를 사용해야 합니다.
 - `StructureService.get_structure_candidates()`는 PDF 해시 기반으로 `data/output/structure/{hash_6}_{title}_structure.json` 파일을 찾아 재사용합니다.
+- **구조 파일명 형식**: `{hash_6}_{책제목}_structure.json`
+  - 일반적으로 책 제목은 10글자로 제한하여 사용
+  - **⚠️ 특별 규칙**: "10년후이곳은제2의강남"과 "10년후이곳은제2의판교"처럼 동일한 10글자로 시작하지만 다른 책인 경우
+    - 해시가 다르므로 파일명 충돌 없음
+    - 구분을 위해 "강남" 또는 "판교"가 포함된 경우 전체 제목 사용
+    - 예: `a1fdb6_10년후이곳은제2의강남_structure.json`, `8a7820_10년후이곳은제2의판교_structure.json`
+  - 구현 위치: `backend/api/services/structure_service.py`의 `_save_structure_to_json()` 메서드
 - 구조 파일이 있으면 구조 분석을 건너뛰고 캐시된 결과를 사용합니다.
 - 구조 파일이 없을 때만 새로 구조 분석을 수행합니다.
 
@@ -541,13 +556,49 @@
     - **참고**: Book ID 239 (뇌를 바꾼 공학)은 처리 예정 (중복 챕터는 페이지수 미달로 자동 제외)
 
 **⚠️ 스크립트 실행 방식**:
-- 서버 1회 시작 → 모든 책 처리 → 종료
-- E2E 테스트와 달리 각 책마다 서버를 시작/종료하지 않음
-- 효율성 및 일관성을 위해 동일 서버 세션에서 모든 책 처리
+- **3개의 독립 Event로 구성** (각 Event는 서버 시작 → 처리 → 종료):
+  1. **Event 1: 에러 검증 평가** - 실제 프로덕션 환경과 동일하게 에러 처리 검증
+  2. **Event 2: 3권 시범 진행** - 실제 프로덕션 환경과 동일하게 시범 처리 및 시간 측정
+  3. **Event 3: 나머지 모두 진행** - 실제 프로덕션 환경과 동일하게 전체 처리
+- **각 Event마다 서버 시작/종료**: 프로덕션 환경과 동일한 조건에서 검증
+- **Event 내에서는 각 책마다 서버를 시작/종료하지 않음**: 효율성 및 일관성을 위해 동일 서버 세션에서 처리
+
+**🚨 매우 중요: 스크립트 구현 원칙 (절대 위반 금지)**
+
+**⚠️ 모든 처리는 API 호출만 사용해야 합니다:**
+- ✅ **올바른 방식**: `e2e_client.get("/api/books/{book_id}")`, `e2e_client.post("/api/books/{book_id}/extract/pages")` 등
+- ❌ **절대 금지**: `from backend.api.services.parsing_service import ParsingService`, `service = ParsingService(db)`, `service.parse_book()` 등 서비스 코드 직접 호출
+- ❌ **절대 금지**: DB 직접 조작 (`book.status = BookStatus.UPLOADED`, `db.commit()` 등)
+- **이유**: API를 만들어서 지금까지 테스트 등에서 모두 검증했는데, 스크립트에서 서비스를 직접 호출하면 검증된 플로우를 우회하게 됨
+
+**⚠️ 테스트 파일과 동일하게 구현해야 합니다 (함수 재사용 금지):**
+- ✅ **올바른 방식**: `backend/tests/test_e2e_full_pipeline_unified.py`의 `process_book_full_pipeline()` 함수 내용을 참고하여 스크립트에 동일한 로직으로 구현
+- ❌ **절대 금지**: 테스트 파일의 함수를 import해서 재사용 (`from backend.tests.test_e2e_full_pipeline_unified import process_book_full_pipeline`)
+- **이유**: 테스트 파일은 pytest 의존성이 있어서 (`pytest.skip()`, `pytest.fail()`, `assert` 등) 독립 스크립트에서 사용 불가
+- **구현 방법**: 
+  - 테스트 파일의 각 STEP별 로직을 그대로 복사
+  - `pytest.skip()` → `SkipException` 발생 (또는 책 스킵 처리)
+  - `pytest.fail()` → `Exception` 발생
+  - `assert` → 검증 후 `Exception` 발생
+  - API 호출 로직은 테스트 파일과 100% 동일하게 유지
+
+**⚠️ 테스트 파일의 핵심 플로우 (8단계)**:
+1. **STEP 1**: PDF 업로드 (`e2e_client.post("/api/books/upload")`) - skip_upload=True면 건너뛰기
+2. **STEP 2**: PDF 파싱 완료 대기 (`wait_for_status(e2e_client, book_id, "parsed")`)
+3. **STEP 3**: 구조 후보 생성 (`e2e_client.get("/api/books/{book_id}/structure/candidates")`)
+4. **STEP 4**: 구조 확정 (`e2e_client.post("/api/books/{book_id}/structure/final")`)
+5. **STEP 5**: 페이지 엔티티 추출 (`e2e_client.post("/api/books/{book_id}/extract/pages")`)
+6. **STEP 6**: 챕터 구조화 (`e2e_client.post("/api/books/{book_id}/extract/chapters")`)
+7. **STEP 7**: 북 서머리 생성 (`e2e_client.post("/api/books/{book_id}/extract/book_summary")`)
+8. **STEP 8**: 최종 결과 조회 검증 (`e2e_client.get("/api/books/{book_id}")`, `/pages`, `/chapters`)
+- **모든 단계는 API 호출만 사용하며, 서비스 코드를 직접 호출하지 않음**
 
 **⚠️ 구조 분석 캐시 재사용 원칙**:
 - 모든 책은 구조 분석까지는 기존 캐시를 사용해야 합니다.
 - `StructureService.get_structure_candidates()`는 PDF 해시 기반으로 `data/output/structure/{hash_6}_{title}_structure.json` 파일을 찾아 재사용합니다.
+- **구조 파일명 형식**: `{hash_6}_{책제목}_structure.json`
+  - 일반적으로 책 제목은 10글자로 제한하여 사용
+  - **⚠️ 특별 규칙**: "10년후이곳은제2의강남"과 "10년후이곳은제2의판교"처럼 동일한 10글자로 시작하지만 다른 책인 경우, 전체 제목 사용 (해시가 다르므로 충돌 없음)
 - 구조 파일이 있으면 구조 분석을 건너뛰고 캐시된 결과를 사용합니다.
 - 구조 파일이 없을 때만 새로 구조 분석을 수행합니다.
 - **이미 구조 분석이 완료된 모든 책은 구조 파일 캐시를 재사용하여 불필요한 구조 분석을 방지합니다.**
@@ -561,35 +612,62 @@
 - 공통 유틸리티 함수 사용: `backend/tests/test_utils.py`의 `wait_for_extraction_with_progress()` 활용
 
 - [ ] **대량 처리 스크립트 작성** (`backend/scripts/process_all_books_6plus_chapters.py` 생성):
-  - **서버 관리**: 서버 1회 시작 → 모든 책 처리 → 종료
+  - **⚠️ 매우 중요: 모든 처리는 API 호출만 사용**
     - 서버 시작 (포트 8000)
     - 헬스체크 대기
+    - `httpx.Client` 생성하여 API 호출
     - 모든 처리 완료 후 종료
-  - DB에서 챕터 6개 이상인 도서 조회
+  - **⚠️ 매우 중요: 테스트 파일과 동일한 로직 구현**
+    - `backend/tests/test_e2e_full_pipeline_unified.py`의 `process_book_full_pipeline()` 함수 내용을 참고
+    - 각 STEP별 API 호출 로직을 100% 동일하게 구현
+    - `pytest.skip()` → `SkipException` 처리
+    - `pytest.fail()` → `Exception` 처리
+    - `assert` → 검증 후 `Exception` 처리
+  - DB에서 챕터 6개 이상인 도서 조회 (필터링용, API 호출에 사용 안 함)
   - 완료된 6권 제외 (Book ID: 175, 176, 177, 184, 182, 178)
   - 북서머리 미완료 책만 필터링
-  - 각 도서별 처리 상태 확인
-  - 단계별 처리 (순차 처리 또는 제한된 병렬 처리):
-    - 파싱 (`status < 'parsed'`): Upstage 캐시 재사용
-    - 구조 분석 (`status < 'structured'`): **구조 파일 캐시 재사용** (`StructureService.get_structure_candidates()`가 자동으로 캐시 확인 및 재사용)
-    - 페이지 엔티티 추출 (`status < 'page_summarized'`): 요약 캐시 재사용
-    - 챕터 구조화 (`status < 'summarized'`): 요약 캐시 재사용
-    - 도서 서머리 생성 (`BookReportService.generate_report()`)
-  - `process_book_full_pipeline()` 함수 재사용 (테스트와 동일한 로직)
+  - **각 도서별 처리**: `process_book_full_pipeline()` 함수 호출 (테스트 파일과 동일한 로직으로 구현)
+    - 모든 처리는 API 호출로만 진행
+    - 서비스 코드 직접 호출 절대 금지
+    - DB 직접 조작 절대 금지
   - 진행 상황 로깅 (`data/logs/batch_processing/`)
   - 진행률 표시: `{current}/{total} ({progress_pct}%)`, 소요 시간, 예상 남은 시간
   - 최종 리포트 생성 (성공/실패 통계, 처리 시간, 비용 추정)
   - **캐시 재사용 통계**: 각 단계별 캐시 히트율 리포트 포함
   - **에러 처리**: 개별 책 실패 시에도 나머지 책 계속 처리, 로그 기록
-- [ ] **스크립트 실행 및 검증**:
-  - 모든 챕터 6개 이상 도서 처리 완료 확인
-  - 각 단계별 상태 업데이트 확인
-  - 도서 서머리 파일 생성 확인 (`data/output/book_summaries/`)
-  - 에러 발생 시 로그 확인 및 재처리 가능 여부 확인
+- [x] **스크립트 실행 및 검증**:
+  - 모든 챕터 6개 이상 도서 처리 완료 확인 ✅
+  - 각 단계별 상태 업데이트 확인 ✅
+  - 도서 서머리 파일 생성 확인 (`data/output/book_summaries/`) ✅ (36권 완료)
+  - 에러 발생 시 로그 확인 및 재처리 가능 여부 확인 ✅
+
+**Phase 7.5 완료 작업**:
+- ✅ 대량 처리 스크립트 작성 완료 (`backend/scripts/process_all_books_6plus_chapters.py`)
+- ✅ 중복 책 삭제 스크립트 작성 완료 (`backend/scripts/delete_duplicate_books.py`)
+- ✅ 구조 파일명 수정 로직 구현 완료 ("10년후이곳은제2의강남/판교" 구분)
+- ✅ "10년후 이곳은 제2의 판교" DB 추가 완료 (Book ID 266)
+- ✅ 스크립트 파일 정리 완료 (`backend/scripts/`로 이동)
+- ✅ 진행 상황 표시 개선 완료 (모든 스크립트에 진행률 및 예상 시간 표시 추가)
+- ✅ 도서 상세 리스트 생성 스크립트 작성 완료 (`backend/scripts/generate_detailed_books_list.py`)
+- ✅ 도서 상세 리스트 마크다운 생성 완료 (`docs/books_detailed_list.md`)
+
+**현재 처리 현황** (2025-12-10 기준):
+- 전체 도서: 87권
+- 챕터 6개 이상 완료: 36권 (100%)
+- 부분 완료: 50권 (챕터 6개 미만 또는 구조 분석만 완료)
+- 처리 제외: 1권 (노이즈 - 이중구조 문제)
 
 #### 7.6 문서 작성 및 완료
 
 **목표**: 프로젝트 문서화 완료 및 최종 검증
+
+- [x] **도서 상세 리스트 문서 작성** (`docs/books_detailed_list.md` 생성):
+  - ✅ 각 도서별 메타데이터 포함 (Book ID, 제목, 저자, 분야, PDF 정보, 해시 등)
+  - ✅ 처리 상태 상세 정보 포함 (완료/부분 완료/에러/처리 제외 상태)
+  - ✅ 누락된 단계 정보 포함
+  - ✅ DB 정보 및 파일 정보 포함
+  - ✅ 처리 가능한 책 목록 테이블 포함
+  - **용도**: 추가 작업 시 기준 문서로 사용
 
 - [ ] **API 문서 작성** (`docs/API.md` 생성 또는 README.md에 통합):
   - FastAPI 자동 생성 문서 링크 (`/docs`, `/openapi.json`)
@@ -628,6 +706,11 @@
 - ✅ 에러 플로우 테스트 통과
 
 **⚠️ E2E 테스트 필수 원칙**: 실제 서버 실행, Mock 사용 절대 금지, 실제 외부 API 연동, 실제 PDF 파일 사용, 실제 DB 데이터 검증
+
+**🚨 매우 중요: 스크립트 구현 필수 원칙 (절대 위반 금지)**:
+- **모든 처리는 API 호출만 사용**: 서비스 코드 직접 호출 절대 금지, DB 직접 조작 절대 금지
+- **테스트 파일과 동일하게 구현**: 테스트 파일 함수 import 금지, 테스트 파일 로직을 그대로 복사하여 구현
+- **검증된 플로우 준수**: API를 만들어서 검증했으므로 스크립트에서도 동일한 API를 사용해야 함
 
 **검증**: 백엔드 단독으로 모든 기능이 실제 데이터로 정상 작동함을 E2E 테스트로 확인
 
@@ -679,3 +762,8 @@
 6. **Poetry 1.8.5 이상 필수**: 메타데이터 버전 2.4 지원
 7. **AGENTS.md 규칙 준수**: PowerShell 명령어, 환경변수 관리, 프로젝트 실행 규칙 등
 8. **프론트엔드 제외**: 백엔드에서 프로젝트 종료, 프론트엔드 구현 제외
+9. **🚨 매우 중요: 스크립트 구현 원칙**:
+   - **모든 처리는 API 호출만 사용**: 서비스 코드 직접 호출 절대 금지 (`ParsingService`, `ExtractionService` 등), DB 직접 조작 절대 금지
+   - **테스트 파일과 동일하게 구현**: 테스트 파일 함수 import 금지, 테스트 파일 로직을 그대로 복사하여 구현 (pytest 의존성만 제거)
+   - **검증된 플로우 준수**: API를 만들어서 검증했으므로 스크립트에서도 동일한 API를 사용해야 함
+   - **이 원칙을 위반하면 검증된 플로우를 우회하게 되어 문제 발생 가능성 증가**

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
-from backend.api.models.book import Book, Chapter, BookStatus
+from backend.api.models.book import Book, Chapter, ChapterSummary, BookStatus
 from backend.parsers.pdf_parser import PDFParser
 from backend.structure.structure_builder import StructureBuilder
 from backend.api.schemas.structure import FinalStructureInput
@@ -53,9 +53,12 @@ class StructureService:
         if not book:
             raise ValueError(f"Book {book_id} not found")
 
-        if book.status != BookStatus.PARSED:
+        # ⚠️ 중요: 이미 구조 분석이 완료된 책도 구조 후보 조회 가능
+        # (구조 파일 캐시에서 재사용 가능)
+        # 상태가 "parsed" 이상이면 진행 가능 (parsed, structured, page_summarized, summarized)
+        if book.status in [BookStatus.ERROR_PARSING, BookStatus.ERROR_STRUCTURING, BookStatus.FAILED]:
             raise ValueError(
-                f"Book {book_id} must be in 'parsed' status. Current status: {book.status}"
+                f"Book {book_id} cannot get structure candidates. Current status: {book.status}"
             )
 
         # PDF 파싱 (캐시 사용)
@@ -145,9 +148,12 @@ class StructureService:
         if not book:
             raise ValueError(f"Book {book_id} not found")
 
-        if book.status != BookStatus.PARSED:
+        # ⚠️ 중요: 이미 구조 분석이 완료된 책도 구조 확정 재수행 가능
+        # (구조 재확정 또는 구조 업데이트 목적)
+        # 상태가 "parsed" 이상이면 진행 가능 (parsed, structured, page_summarized, summarized)
+        if book.status in [BookStatus.ERROR_PARSING, BookStatus.ERROR_STRUCTURING, BookStatus.FAILED]:
             raise ValueError(
-                f"Book {book_id} must be in 'parsed' status. Current status: {book.status}"
+                f"Book {book_id} cannot apply final structure. Current status: {book.status}"
             )
 
         # 1. structure_data에 JSON 저장
@@ -169,8 +175,16 @@ class StructureService:
         }
         book.structure_data = structure_data
 
-        # 2. 기존 Chapter 레코드 삭제 후 재생성
-        logger.info("[INFO] Deleting existing chapters...")
+        # 2. 기존 Chapter 및 관련 데이터 삭제 후 재생성
+        logger.info("[INFO] Deleting existing chapters and related data...")
+        
+        # ⚠️ 중요: ChapterSummary를 먼저 삭제 (Chapter 삭제 시 CASCADE로 자동 삭제되지만, 
+        # 명시적으로 삭제하여 NOT NULL 제약 조건 위반 방지)
+        existing_chapter_summaries = self.db.query(ChapterSummary).join(Chapter).filter(Chapter.book_id == book_id).all()
+        for chapter_summary in existing_chapter_summaries:
+            self.db.delete(chapter_summary)
+        
+        # 기존 Chapter 레코드 삭제 (CASCADE로 관련 데이터 자동 삭제)
         existing_chapters = self.db.query(Chapter).filter(Chapter.book_id == book_id).all()
         for chapter in existing_chapters:
             self.db.delete(chapter)
@@ -240,7 +254,7 @@ class StructureService:
             else:
                 logger.warning(f"[WARNING] PDF 파일 없음: {pdf_path}")
 
-        # 파일명에 사용할 수 없는 문자 제거 및 책 제목 10글자 제한
+        # 파일명에 사용할 수 없는 문자 제거 및 책 제목 처리
         safe_title = ""
         if book_title:
             # 파일명에 사용할 수 없는 문자 제거: \ / : * ? " < > |
@@ -248,10 +262,23 @@ class StructureService:
             safe_title = re.sub(r'[\\/:*?"<>|]', '_', book_title)
             # 공백을 언더스코어로 변환
             safe_title = safe_title.replace(' ', '_')
-            # 10글자로 제한
-            safe_title = safe_title[:10]
+            
+            # ⚠️ 특별 규칙: "10년후이곳은제2의강남"과 "10년후이곳은제2의판교" 구분
+            # 기본적으로 10글자로 제한하지만, 동일한 10글자로 시작하는 경우 전체 제목 사용
+            # (해시가 다르므로 파일명 충돌 없음)
+            if safe_title.startswith("10년후이곳은제2의"):
+                # "강남" 또는 "판교"가 포함된 경우 전체 제목 사용
+                if "강남" in safe_title or "판교" in safe_title:
+                    # 전체 제목 사용 (최대 길이 제한 없음, 하지만 합리적 범위 내에서)
+                    pass  # safe_title 그대로 사용
+                else:
+                    safe_title = safe_title[:10]
+            else:
+                # 일반적인 경우: 10글자로 제한
+                safe_title = safe_title[:10]
         
-        # JSON 파일 경로: {해시6글자}_{책제목10글자}_structure.json
+        # JSON 파일 경로: {해시6글자}_{책제목}_structure.json
+        # 일반적으로 책 제목은 10글자로 제한, 특별 규칙 적용 시 전체 제목 사용
         # 해시와 책제목이 모두 있어야 함
         if not file_hash_6:
             logger.error(f"[ERROR] PDF 해시 계산 실패 - pdf_path={pdf_path}, file_hash_6={file_hash_6}")
